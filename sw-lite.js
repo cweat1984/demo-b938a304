@@ -7,6 +7,7 @@ self.addEventListener('message', e => { if (e.data && e.data.type === 'SKIP_WAIT
 self.addEventListener('fetch', e => {
   const r = e.request; if (r.method !== 'GET') return
   const u = new URL(r.url)
+  if (u.origin === location.origin && /\/g\//.test(u.pathname)) return // the guest-only page is never cached by (or served from) the owner app's worker
   if (r.mode === 'navigate' || (u.origin === location.origin)) {
     e.respondWith(fetch(r).then(res => { if (res.ok) { const cp = res.clone(); caches.open(C).then(c => c.put(r.mode === 'navigate' ? './index.html' : r, cp)) } return res }).catch(() => caches.match(r.mode === 'navigate' ? './index.html' : r).then(m => m || caches.match('./'))))
     return
