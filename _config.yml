@@ -1,0 +1,19 @@
+# GitHub Pages publish filter for the encrypted shells.
+# Jekyll copies this repository to the site. southern-src is the editable app
+# (source, tests, and unencrypted demo data) and must not be copied.
+# Do not add a .nojekyll file at the repo root. That file turns this filter off
+# and publishes every tracked file, including southern-src.
+exclude:
+  - southern-src
+  - southern-src/**
+  - southern-app
+  - southern-app/**
+  - node_modules
+  - vendor
+  - Gemfile
+  - Gemfile.lock
+  - scripts
+# GitHub Pages forces safe mode. Keep this file to supported keys only.
+safe: true
+lsi: false
+incremental: false
