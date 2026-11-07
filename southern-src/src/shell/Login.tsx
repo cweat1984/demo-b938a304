@@ -34,8 +34,9 @@ function GuestDevice() {
 }
 
 export default function Login() {
-  // A trimmed guest link (site key in the URL, no pass) must not leave the staff role picker focusable under the lock.
-  if (guestDeviceLocked() || sessionStorage.getItem('sc-guest') || urlHasSiteKey()) return <div inert><GuestDevice /></div>
+  // A trimmed guest link or a guest-locked browser never renders the staff role picker.
+  // The lock overlay (GuestLayer) marks the page inert; this staff button stays clickable when that overlay is gone so the owner PIN can return the browser to staff sign-in.
+  if (guestDeviceLocked() || sessionStorage.getItem('sc-guest') || urlHasSiteKey()) return <GuestDevice />
   return <LoginInner />
 }
 function LoginInner() {

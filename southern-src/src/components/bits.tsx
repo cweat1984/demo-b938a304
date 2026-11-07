@@ -9,10 +9,11 @@ export const useDb = () => useStore(s => s.db)
 export const useFilter = () => useStore(s => s.ui.filter)
 export const useScoped = <X extends { divisionId: string; branchId: string }>(arr: X[]) => { const f = useFilter(); return arr.filter(x => inScope(x, f)) }
 
-/** Anything clickable that opens a detail window. */
+/** Anything clickable that opens a detail window. A span, not a button: these sit inside row buttons, and a button inside a button is invalid HTML. */
 export function Ref({ to, children, className }: { to: T.EntityRef; children: ReactNode; className?: string }) {
   const open = useStore(s => s.open)
-  return <button onClick={e => { e.stopPropagation(); open(to) }} data-ref={to.type} className={cn('ref-link text-left', className)}>{children}</button>
+  const go = (e: { preventDefault: () => void; stopPropagation: () => void }) => { e.preventDefault(); e.stopPropagation(); open(to) }
+  return <span role="link" tabIndex={0} onClick={go} onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') go(e) }} data-ref={to.type} className={cn('ref-link text-left', className)}>{children}</span>
 }
 export function EmpRef({ id, className }: { id?: string; className?: string }) {
   const db = useDb(); const e = byId(db.employees, id)

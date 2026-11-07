@@ -1,3 +1,4 @@
+import './lib/previewIsolate'
 import './lib/guestPartition'
 import { bindPresent } from './lib/present'
 import { StrictMode } from 'react'

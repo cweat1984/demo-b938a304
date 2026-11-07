@@ -1,0 +1,21 @@
+# Does not deploy. Fails the pull request if a Pages build would publish
+# southern-src (editable source and unencrypted demo data).
+name: pages-source-check
+on:
+  pull_request:
+  push:
+    branches: [main]
+jobs:
+  unpublished-source:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.3'
+          bundler-cache: false
+      - run: gem install jekyll -v '~> 3.10' --no-document
+      - run: node southern-src/scripts/check-pages-publish.mjs

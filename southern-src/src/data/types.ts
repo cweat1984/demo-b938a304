@@ -587,6 +587,8 @@ export interface DB {
   tenantId?: string
   company?: CompanyProfile
   seededAt: string
+  /** Monotonic stamp for the on-device save. A reload prefers the newer of IndexedDB and the pending snapshot. */
+  savedRev?: number
   employees: Employee[]
   certs: Cert[]
   equipment: Equipment[]

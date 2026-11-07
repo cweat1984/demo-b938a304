@@ -106,7 +106,7 @@ await p.setInputFiles('[data-testid=add-photo]', { name: 'p.png', mimeType: 'ima
 await p.click('[data-testid=add-chemical] button, [data-testid=add-chemical] [role=switch]').catch(async () => p.click('[data-testid=add-chemical]'))
 await p.waitForSelector('[data-testid=sds-section]')
 if (!(await p.isDisabled('[data-testid=add-save]'))) fail('chemical saved without SDS')
-await p.setInputFiles('[data-testid=add-sds]', '/workspace/southern-app/app/public/sds/sds-8.pdf')
+await p.setInputFiles('[data-testid=add-sds]', new URL('./public/sds/sds-8.pdf', import.meta.url).pathname)
 await p.waitForTimeout(300); await p.click('[data-testid=add-save]'); await settle(p)
 db = await readDb(p); const nu = db.items.find(i => i.name === 'Citrus degreaser (gal)')
 if (!nu || !nu.photo || !nu.loc || !nu.sdsId || !db.sds.find(s => s.id === nu.sdsId)?.pdf) fail('new chemical not saved with photo/location/SDS'); else ok('new item requires photo + location; chemical requires SDS')

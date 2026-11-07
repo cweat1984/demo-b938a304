@@ -12,6 +12,7 @@ import { useAppName, useCompany, CRANE_PAGES, storeLabel } from '../data/brand'
 import { useBranding } from '../data/branding'
 import { motion, AnimatePresence } from 'motion/react'
 import { Bell, Search, Siren, LogOut, Menu, WifiOff, ChevronDown, ChevronLeft, Sparkles, Check } from 'lucide-react'
+import UndoBar from '../components/UndoBar'
 import { useStore } from '../data/store'
 import { PAGES, roleDef, GATED_PAGES, type PageKey } from '../data/roles'
 import { ICONS } from '../components/icons'
@@ -232,6 +233,7 @@ export default function Shell() {
             </button>
           )}
           <PresentBtn />
+          <UndoBar />
           <button onClick={() => setBell(true)} className="relative shrink-0 grid size-10 place-items-center rounded-full hover:bg-surface-2" aria-label="Notifications" data-testid="bell">
             <Bell className="size-5" />
             {unread > 0 && <span className="absolute top-1.5 right-1.5 min-w-4 h-4 px-1 rounded-full bg-bad text-[10px] font-bold text-white grid place-items-center num">{unread}</span>}

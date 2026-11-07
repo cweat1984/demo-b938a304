@@ -54,7 +54,7 @@ export async function refreshRevoked() {
   if (!GUEST_ONLY) return
   try { const r = await fetch(`./revoked.json?t=${Date.now()}`, { cache: 'no-store' }); if (r.ok) { const j = await r.json(); revoked = { ids: Array.isArray(j.ids) ? j.ids.map(String) : [], before: Number(j.before) || undefined } } } catch { /* offline: keep the last list */ }
 }
-const isRevoked = (c: GuestClaims) => revoked.ids.includes(c.i) || (!!revoked.before && c.c < revoked.before) || passes().some(p => p.i === c.i && p.revoked)
+const isRevoked = (c: GuestClaims) => revoked.ids.includes(c.i) || (!!revoked.before && c.c < revoked.before) || localRevokedIds().includes(c.i) || passes().some(p => p.i === c.i && p.revoked)
 export async function verifyPass(tok: string): Promise<{ ok: true; c: GuestClaims } | { ok: false; why: 'bad' | 'expired' | 'revoked' | 'moved'; c?: GuestClaims }> {
   if (GUEST_ELSEWHERE) return { ok: false, why: 'moved' }
   try {
@@ -75,8 +75,11 @@ export const urlHasSiteKey = () => { try { return /staticrypt_pwd=|remember_me/.
 export const DURATIONS = [{ k: '1h', label: '1 hour', ms: 36e5 }, { k: '2h', label: '2 hours', ms: 72e5 }, { k: '24h', label: '24 hours', ms: 864e5 }, { k: '3d', label: '3 days', ms: 3 * 864e5 }, { k: '7d', label: '7 days', ms: 7 * 864e5 }, { k: 'custom', label: 'Custom', ms: 0 }] as const
 export const DEFAULT_DURATION = '2h'
 const LIST = 'sc-guest-passes'
+/** Ids only. A guest page may read this so a revoke in this browser is honored, and may not write it or see the signed links. */
+const REV_LOCAL = 'sc-guest-revoked'
+export const localRevokedIds = (): string[] => { try { const v = JSON.parse(localStorage.getItem(REV_LOCAL) || '[]'); return Array.isArray(v) ? v.map(String) : [] } catch { return [] } }
 export const passes = (): PassRec[] => { try { return JSON.parse(localStorage.getItem(LIST) || '[]') } catch { return [] } }
-export const savePasses = (l: PassRec[]) => localStorage.setItem(LIST, JSON.stringify(l))
+export const savePasses = (l: PassRec[]) => { localStorage.setItem(LIST, JSON.stringify(l)); try { localStorage.setItem(REV_LOCAL, JSON.stringify(l.filter(p => p.revoked).map(p => p.i))) } catch { /* quota */ } }
 export const GUEST_KEY = 'sc-guest'           // sessionStorage: the active guest token
 export const DEVICE_KEY = 'sc-guest-device'   // localStorage: this browser opened a guest pass → no role picker here
 export const LOCK_KEY = 'sc-guest-locked'      // localStorage: this browser used a pass that ended
