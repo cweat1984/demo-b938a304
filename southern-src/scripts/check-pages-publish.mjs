@@ -21,7 +21,7 @@ if (!/^exclude:[\s\S]*- southern-src\b/m.test(cfg)) bad('_config.yml does not ex
 else ok('_config.yml excludes southern-src')
 
 fs.rmSync(dest, { recursive: true, force: true })
-const jekyll = spawnSync('jekyll', ['build', '--source', repo, '--destination', dest, '--disable-disk-cache'], { encoding: 'utf8' })
+const jekyll = spawnSync('jekyll', ['build', '--source', repo, '--destination', dest], { encoding: 'utf8' })
 if (jekyll.status !== 0) {
   bad('jekyll build failed\n' + (jekyll.stderr || jekyll.stdout || '').slice(-2000))
 } else {
