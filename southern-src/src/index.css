@@ -1,0 +1,257 @@
+@import "tailwindcss";
+@import "leaflet/dist/leaflet.css";
+
+@custom-variant dark (&:where(.dark, .dark *));
+/* real desktops only (mouse + wide): the field-app phone mockup; tablets and sideways phones get the app full screen */
+@custom-variant landscape-short (@media (orientation: landscape) and (max-height: 500px));
+@custom-variant desk (@media (min-width: 1024px) and (hover: hover) and (pointer: fine));
+
+@theme {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
+  --color-line: var(--line);
+  --color-ink: var(--text);
+  --color-muted: var(--muted);
+  --color-faint: var(--faint);
+  --color-accent: var(--accent);
+  --color-accent-ink: var(--accent-ink);
+  --color-ok: var(--ok);
+  --color-warn: var(--warn);
+  --color-bad: var(--bad);
+  --color-ok-solid: var(--ok-solid, #15803d);
+  --color-info-solid: var(--info-solid, #0369a1);
+  --color-bad-solid: var(--bad-solid, #dc2626);
+  --color-info: var(--info);
+  --color-secondary: var(--secondary);
+  --color-highlight: var(--highlight);
+  --font-sans: var(--font-ui);
+  --font-display: "Barlow", var(--font-ui);
+  --font-cond: "Barlow Condensed", "Barlow", var(--font-ui);
+  --font-mono: "JetBrains Mono Variable", ui-monospace, monospace;
+}
+
+:root {
+  --font-ui: "Inter Variable", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --accent: #ef3b3b;
+  --accent-ink: #ffffff;
+  --bg: #f4f5f7;
+  --surface: #ffffff;
+  --surface-2: #f0f1f4;
+  --surface-3: #e6e8ec;
+  --line: #e3e5ea;
+  --text: #0d1014;
+  --muted: #5d6573;
+  --faint: #9aa1ad;
+  --shadow: 0 1px 2px rgb(16 24 40 / .05), 0 8px 24px -12px rgb(16 24 40 / .12);
+  --glow: transparent;
+  --ok: #15803d; --warn: #b45309; --bad: #dc2626; --info: #0369a1; --secondary: #475467; --highlight: #d62f2f;
+  color-scheme: light;
+  font-size: var(--fs, 15px);
+}
+.dark {
+  --bg: #07090c;
+  --surface: #0f1217;
+  --surface-2: #151a21;
+  --surface-3: #1d232c;
+  --line: #222933;
+  --text: #f2f4f7;
+  --muted: #98a1b0;
+  --faint: #5d6675;
+  --shadow: 0 1px 0 rgb(255 255 255 / .03) inset, 0 20px 40px -24px rgb(0 0 0 / .7);
+  --glow: color-mix(in oklab, var(--accent) 22%, transparent);
+  --ok: #22c55e; --warn: #f59e0b; --bad: #f05252; --info: #38bdf8; --secondary: #3a3a3c; --highlight: #8e8e93;
+  color-scheme: dark;
+}
+
+html, body, #root { height: 100%; }
+body { background: var(--bg); color: var(--text); font-family: var(--font-ui); -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; }
+* { -webkit-tap-highlight-color: transparent; }
+::selection { background: color-mix(in oklab, var(--accent) 35%, transparent); }
+
+.hairline { border-color: var(--line); }
+.num { font-variant-numeric: tabular-nums; font-feature-settings: "tnum" 1; }
+
+.scroll-thin { scrollbar-width: thin; scrollbar-color: var(--surface-3) transparent; }
+.scroll-thin::-webkit-scrollbar { width: 8px; height: 8px; }
+.scroll-thin::-webkit-scrollbar-thumb { background: var(--surface-3); border-radius: 8px; }
+.no-scrollbar { scrollbar-width: none; } .no-scrollbar::-webkit-scrollbar { display: none; }
+
+.focus-ring:focus-visible, button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+select.input { appearance: none; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2398a1b0' stroke-width='2.5'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 12px center; padding-right: 32px; }
+
+
+@keyframes pulse-ring { 0% { transform: scale(.6); opacity: .9 } 100% { transform: scale(2.6); opacity: 0 } }
+@keyframes shimmer { from { background-position: -200% 0 } to { background-position: 200% 0 } }
+@keyframes blink { 50% { opacity: .35 } }
+.blink { animation: blink 1.4s ease-in-out infinite; }
+
+/* Leaflet theming */
+.leaflet-container { background: var(--surface-2) !important; font-family: var(--font-ui); }
+.leaflet-control-attribution { background: color-mix(in oklab, var(--surface) 70%, transparent) !important; color: var(--faint) !important; font-size: 9px !important; }
+.leaflet-control-attribution a { color: var(--muted) !important; }
+.leaflet-control-zoom a { background: var(--surface) !important; color: var(--text) !important; border-color: var(--line) !important; }
+.leaflet-tooltip.sc-tip { background: var(--surface); color: var(--text); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow); padding: 6px 10px; font-size: 12px; }
+.leaflet-tooltip.sc-tip::before { display: none; }
+.sc-marker { position: relative; }
+.sc-marker .ring { position: absolute; inset: 0; border-radius: 9999px; animation: pulse-ring 2.4s ease-out infinite; }
+.sc-pin { display: grid; place-items: center; border-radius: 9999px; color: white; font: 700 10px/1 "Barlow Condensed", sans-serif; letter-spacing: .02em; box-shadow: 0 0 0 2px rgb(0 0 0 / .35), 0 6px 14px rgb(0 0 0 / .4); }
+.dark .leaflet-tile-pane { filter: saturate(.6) brightness(.95); }
+
+.sig-pad { touch-action: none; background: repeating-linear-gradient(0deg, transparent 0 39px, var(--line) 39px 40px); }
+
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: .001ms !important; transition-duration: .001ms !important; } }
+@utility phone-frame { width: 402px; height: min(874px, calc(100vh - 48px)); border-radius: 54px; padding: 12px; background: #0b0d10; box-shadow: 0 0 0 2px #2a2f37, 0 40px 120px -20px rgba(0,0,0,.6); }
+@utility phone-screen { border-radius: 42px; overflow: hidden; }
+.pb-safe { padding-bottom: max(env(safe-area-inset-bottom), 10px); }
+
+/* Accent used as TEXT/ICON color gets a contrast-guarded variant (e.g. safety yellow on light gray). */
+.text-accent { color: var(--accent-fg, var(--accent)) !important; }
+
+/* SLH primer-gray metallic sheen on hero surfaces */
+html[data-theme="slh"] body { background-image: radial-gradient(120% 60% at 50% -10%, rgb(255 255 255 / .06), transparent 60%); background-attachment: fixed; }
+
+/* Red-and-white hazard chevron motif (from SLH crane counterweights/outriggers) */
+.chevrons { background: repeating-linear-gradient(-45deg, var(--chev, #d62f2f) 0 10px, #ffffff 10px 20px); }
+
+@keyframes truckin { from { transform: translateX(-60px); opacity: 0 } to { transform: none; opacity: 1 } }
+
+.leaflet-tooltip.tlabel { background: rgb(11 13 16 / .82); color: #fff; border: 0; box-shadow: none; padding: 2px 7px; border-radius: 6px; font: 700 11px Inter, system-ui; }
+.leaflet-tooltip.tlabel::before { display: none; }
+
+/* Everything is clickable: one consistent affordance for entity links and drillable surfaces */
+
+
+/* Component classes live in a layer so Tailwind utilities (pl-9, w-56, h-9, py-1…) always win. */
+@layer components {
+  .card { background: var(--surface); border: 1px solid var(--line); border-radius: 20px; box-shadow: var(--shadow); }
+  .card-flat { background: var(--surface-2); border-radius: 16px; }
+  .display { font-family: "Barlow", var(--font-ui); letter-spacing: -0.02em; }
+  .cond { font-family: "Barlow Condensed", "Barlow", var(--font-ui); letter-spacing: 0.02em; }
+  .label { font-size: 11px; text-transform: uppercase; letter-spacing: .12em; color: var(--muted); font-weight: 600; }
+  .input { width: 100%; background: var(--surface-2); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; color: var(--text); font-size: 15px; transition: border-color .15s, background .15s; }
+  .input:focus { outline: none; border-color: var(--accent); background: var(--surface); }
+  .input::placeholder { color: var(--faint); }
+  .grid-bg { background-image: linear-gradient(var(--line) 1px, transparent 1px), linear-gradient(90deg, var(--line) 1px, transparent 1px); background-size: 48px 48px; }
+  .accent-glow { box-shadow: 0 0 0 1px color-mix(in oklab, var(--accent) 50%, transparent), 0 10px 40px -10px var(--glow); }
+  .btn-icon { display: inline-grid; place-items: center; width: 40px; height: 40px; border-radius: 999px; color: var(--muted); transition: background .15s, color .15s; }
+  .btn-icon:hover { background: var(--surface-2); color: var(--text); }
+  html[data-theme="slh"] .card { background-image: linear-gradient(155deg, rgb(255 255 255 / .075) 0%, transparent 38%, rgb(255 255 255 / .03) 62%, transparent 100%); }
+  html[data-theme="slh"]:not(.dark) .card { background-image: linear-gradient(155deg, rgb(255 255 255 / .7) 0%, transparent 42%, rgb(255 255 255 / .35) 64%, transparent 100%); }
+  .ref-link { cursor: pointer; border-radius: 4px; transition: color .15s, background-color .15s, text-decoration-color .15s; text-decoration: underline; text-decoration-color: transparent; text-underline-offset: 3px; text-decoration-thickness: 1px; }
+  .ref-link:hover { color: var(--accent-fg, var(--accent)); text-decoration-color: color-mix(in srgb, var(--accent-fg, var(--accent)) 45%, transparent); }
+  .ref-link:active { opacity: .7; }
+  .drill { cursor: pointer; transition: transform .15s, box-shadow .15s, border-color .15s; }
+  .drill:hover { transform: translateY(-1px); border-color: color-mix(in srgb, var(--accent) 35%, var(--line)); }
+  .drill:active { transform: scale(.985); }
+}
+
+/* Maps get their own stacking context so Leaflet panes (z 400–1000) never draw over sheets & modals. */
+.leaflet-container { z-index: 0; isolation: isolate; }
+
+/* Theme-tinted base map: the tiles pick up a whisper of the theme accent so Old Glory, Desert etc. don't sit on a generic charcoal map. */
+.themed-map .leaflet-tile-pane { position: relative; }
+.themed-map .leaflet-tile-pane::after { content: ''; position: absolute; inset: -5000px; background: var(--accent); opacity: .09; mix-blend-mode: color; pointer-events: none; }
+
+/* Print (dive2 devices M2/M3): a customer proposal (portal under <body>) prints alone from the top; the label sheet prints alone;
+   every other page prints its content on white with the app chrome hidden. */
+@media print {
+  html, body { background: #fff !important; color: #111 !important; }
+  body:has(> [data-print]) > *:not([data-print]) { display: none !important; }
+  body > [data-print] { display: block !important; position: static !important; width: 100%; }
+  body:not(:has(> [data-print])):has([data-print]) * { visibility: hidden !important; }
+  body:not(:has(> [data-print])):has([data-print]) [data-print], body:not(:has(> [data-print])):has([data-print]) [data-print] * { visibility: visible !important; }
+  body:not(:has(> [data-print])):has([data-print]) [data-print] { position: absolute; left: 0; top: 0; width: 100%; color: #111 !important; background: #fff !important; }
+  [data-print] button, [data-print] input[type=range] { display: none !important; }
+  body:not(:has([data-print])) aside, body:not(:has([data-print])) header, body:not(:has([data-print])) nav, [data-sonner-toaster], [data-testid=fb-dock], [data-testid=fb-handle], [data-testid=ask-hero] { display: none !important; }
+  body:not(:has([data-print])) main { margin: 0 !important; padding: 0 !important; width: 100% !important; max-width: none !important; overflow: visible !important; }
+  body:not(:has([data-print])) .card, body:not(:has([data-print])) [class*="card"] { break-inside: avoid; box-shadow: none !important; background: #fff !important; color: #111 !important; border-color: #ccc !important; }
+  body:not(:has([data-print])) * { color: #111 !important; background-image: none !important; backdrop-filter: none !important; }
+  body:not(:has([data-print])) .min-h-screen, body:not(:has([data-print])) .h-screen { min-height: 0 !important; height: auto !important; overflow: visible !important; }
+}
+
+/* Responsive grids with no base column count: keep the single mobile column from growing wider than the screen. */
+@media (max-width: 639px) { [class*="sm:grid-cols-"]:not([class^="grid-cols-"]):not([class*=" grid-cols-"]) { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 767px) { [class*="md:grid-cols-"]:not([class^="grid-cols-"]):not([class*=" grid-cols-"]):not([class*="sm:grid-cols-"]) { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 1023px) { [class*="lg:grid-cols-"]:not([class^="grid-cols-"]):not([class*=" grid-cols-"]):not([class*="sm:grid-cols-"]):not([class*="md:grid-cols-"]) { grid-template-columns: minmax(0, 1fr); } }
+
+/* Vendor wordmark: Cinzel subset (A, R, O, W, L, I, N, E only) */
+@font-face { font-family: 'Arrowline Cinzel'; src: url('./assets/vendor/cinzel-arrowline.woff') format('woff'); font-weight: 400 700; font-display: swap; }
+
+/* ── iOS Safari / iPhone ─────────────────────────────────────────────── */
+@supports (height: 100dvh) { .min-h-screen { min-height: 100dvh; } .h-screen { height: 100dvh; } }
+html { -webkit-text-size-adjust: 100%; }
+body { -webkit-tap-highlight-color: transparent; touch-action: manipulation; overscroll-behavior-y: none; }
+/* Android Chrome pull-to-refresh: the viewport takes overscroll-behavior from <html> (dive2 devices m2) */
+html { overscroll-behavior-y: none; }
+/* 4K at 100% scaling (TV / projector fed 4K): scale the whole UI up (dive2 devices m6) */
+/* dive3 shop M13 + m4: scale with the root font-size (rem), not `zoom` — dnd-kit and Leaflet measure in real pixels, so zoom broke
+   Dispatch drag on 1440p / 4K. Scale by the smaller of width/1920 and height/1080 so an ultrawide doesn't get a 720 px-tall page. */
+@media (min-width: 2400px) and (min-height: 1300px) { html:not(.no-4k) { font-size: 133.333%; } }
+@media (min-width: 3200px) and (min-height: 1800px) { html:not(.no-4k) { font-size: 200%; } }
+/* iOS zooms the page when a focused field is under 16px — keep every text field at 16px on touch screens */
+@media (pointer: coarse) {
+  input:not([type=checkbox]):not([type=radio]):not([type=color]):not([type=range]):not([type=file]), select, textarea, .input { font-size: 16px !important; }
+}
+
+/* ── Presentation mode (projector / screen share) ────────────────────── */
+html.presenting { font-size: 18.5px !important; }
+html.presenting [data-feedback-ui], html.presenting [data-dev], html.presenting [data-demo-tag] { display: none !important; }
+html.presenting .text-\[9px\], html.presenting .text-\[10px\], html.presenting .text-\[10\.5px\], html.presenting .text-\[11px\], html.presenting .text-\[11\.5px\] { font-size: 13px !important; }
+html.presenting .text-xs { font-size: 0.82rem !important; }
+html.presenting svg text { font-size: max(12px, 1em); }
+/* washed-out projectors: stronger secondary text and hairlines in light themes */
+html.presenting:not(.dark) { --muted: #374151 !important; --faint: #4b5563 !important; --line: #c3c9d2 !important; }
+html.presenting.dark { --muted: #d0d5dd !important; --faint: #b3bac5 !important; }
+html.presenting .hairline { border-color: var(--line) !important; }
+
+/* touch: comfortable tap targets for segmented controls and small chips */
+@media (pointer: coarse) { .seg-btn { min-height: 44px; min-width: 44px; } .btn-icon { width: 44px; height: 44px; } [data-tip-dismiss] { min-width: 44px; min-height: 44px; } }
+/* Phones and tablets: Playwright and some WebKit builds report a fine pointer, so size these by width too. */
+@media (max-width: 1100px) {
+  .hub-tab { height: 44px !important; min-height: 44px !important; }
+  .seg-btn, .tap-chip { min-height: 44px !important; min-width: 44px !important; }
+  .btn-icon { width: 44px !important; height: 44px !important; }
+  main .ref-link { min-height: 44px; min-width: 44px; display: inline-flex; align-items: center; }
+}
+@media (pointer: coarse) { .ref-link { padding-block: 8px; margin-block: -8px; } }
+html.presenting .label { font-size: 13px !important; }
+html.presenting .leaflet-marker-icon, html.presenting .leaflet-marker-icon * { font-size: 12px !important; }
+html.presenting .leaflet-tooltip { font-size: 14px !important; }
+
+html.presenting [data-avatar] { font-size: max(12px, var(--av)) !important; }
+html.presenting aside.w-\[232px\] { width: 268px; }
+
+/* roles-fixes #11: presentation mode on 1280-wide laptops/projectors — scale type down a notch so chips, 3-col grids and sub-tabs don't clip */
+@media (max-width: 1440px) {
+  html.presenting { font-size: 16.5px !important; }
+  html.presenting aside.w-\[232px\] { width: 232px; }
+  html.presenting .overflow-x-auto { scrollbar-width: thin; }
+}
+
+/* Guest pass on phones: the countdown is a thin strip at the very top; the app sits just below it so nothing is covered */
+@media (max-width: 639px) {
+  html[data-guest] #root { padding-top: calc(env(safe-area-inset-top) + 22px); }
+  html[data-guest] header.sticky { top: calc(env(safe-area-inset-top) + 22px); }
+  html[data-guest] header.sticky, html[data-guest] [data-testid=field-app] > header { padding-top: 0 !important; height: 4rem !important; }
+}
+
+/* Projector / big screens (≥1800px): nothing under ~11.5px, so the back of the room can read chips and labels */
+@media (min-width: 1800px) {
+  .text-\[9px\], .text-\[9\.5px\], .text-\[10px\], .text-\[10\.5px\] { font-size: 11.5px !important; }
+}
+
+/* Tablets & phones: the bottom tab bar never hides a focused / scrolled-to control */
+@media (max-width: 1023px) { html { scroll-padding-bottom: 96px; } }
+
+/* Milestone 2b: customer background photo behind the app (cards stay solid; overlay keeps text readable) */
+html[data-bgphoto] body { background-image: linear-gradient(color-mix(in srgb, var(--bg) calc(var(--bg-ov, .55) * 100%), transparent), color-mix(in srgb, var(--bg) calc(var(--bg-ov, .55) * 100%), transparent)), var(--bg-photo) !important; background-size: cover !important; background-position: center !important; background-attachment: fixed; }
+@media (pointer: coarse) { html[data-bgphoto] body { background-attachment: scroll; } }
+/* dive3 shop M12: the photo never prints (beats the photo rule on specificity + order) */
+@media print { html[data-bgphoto] body, html[data-bgphoto] { background-image: none !important; background: #fff !important; } }
+/* dive3 shop m5: office printouts skip the briefing offer and sub-nav tabs */
+@media print { body:not(:has([data-print])) [data-testid=briefing-offer], body:not(:has([data-print])) [role=tablist] { display: none !important; } }
+/* dive3 shop M12: page titles, alert chips and sub-tabs sit on a translucent panel over a photo so they stay readable */
+html[data-bgphoto] [data-testid=page-header], html[data-bgphoto] [role=tablist] { background: color-mix(in srgb, var(--bg) 78%, transparent); border-radius: .75rem; box-shadow: 0 0 0 .4rem color-mix(in srgb, var(--bg) 78%, transparent); }

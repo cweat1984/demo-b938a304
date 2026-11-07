@@ -1,0 +1,60 @@
+// iPhone (WebKit) + projector checks. BASE=preview url.
+import { webkit, chromium, devices } from 'playwright'
+import fs from 'fs'
+const base = process.env.BASE || 'http://localhost:4173/'; const out = process.env.OUT || '/workspace/southern-app/screenshots/syscheck/after/'; fs.mkdirSync(out, { recursive: true })
+const fails = [], errors = []; const ok = (c, m) => { if (!c) fails.push(m); console.log((c ? 'ok   ' : 'FAIL ') + m) }
+const wk = await webkit.launch()
+for (const [name, dev] of [['iPhone 14 (390)', devices['iPhone 14']], ['iPhone 15 Pro Max (430)', devices['iPhone 15 Pro Max']]]) {
+  const ctx = await wk.newContext(dev); const p = await ctx.newPage(); const tag = dev.viewport.width
+  p.on('pageerror', e => errors.push(`${name}: ${e.message}`))
+  await p.addInitScript(() => localStorage.setItem('sc-tour-seen', '1'))
+  await p.goto(base); await p.waitForSelector('[data-role=owner]', { timeout: 30000 })
+  ok(await p.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), `${name}: login fits the screen`)
+  ok(await p.evaluate(() => !!document.querySelector('link[rel=apple-touch-icon]') && document.querySelector('meta[name=viewport]').content.includes('viewport-fit=cover') && !!document.querySelector('meta[name=apple-mobile-web-app-capable]')), `${name}: apple-touch-icon, viewport-fit=cover, standalone meta`)
+  const pk = await p.textContent('[data-testid=passkey-btn]').catch(() => ''); ok(/Face ID/.test(pk), `${name}: passkey says Face ID — "${pk.trim()}"`)
+  await p.screenshot({ path: `${out}ios-${tag}-login.png` })
+  await p.click('[data-role=owner]'); await p.waitForTimeout(1200)
+  ok(await p.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), `${name}: owner home fits`)
+  const nav = await p.evaluate(() => { const n = [...document.querySelectorAll('nav')].find(x => getComputedStyle(x).position === 'fixed'); return n ? { cls: n.className, bottom: n.getBoundingClientRect().bottom } : null })
+  ok(!!nav && /safe-area-inset-bottom/.test(nav.cls) && Math.abs(nav.bottom - dev.viewport.height) < 2, `${name}: bottom nav pinned with home-indicator padding`)
+  ok(await p.evaluate(() => /safe-area-inset-top/.test(document.querySelector('header')?.className ?? '')), `${name}: header clears the notch (safe-area-inset-top)`)
+  await p.screenshot({ path: `${out}ios-${tag}-owner-home.png` })
+  ok(await p.locator('[data-testid=fb-handle]').isVisible() && !(await p.locator('[data-testid=suggest-btn]').isVisible()), `${name}: feedback tabs folded into a slim edge handle`)
+  await p.locator('[data-testid=fb-handle]').tap(); await p.waitForTimeout(250); ok(await p.locator('[data-testid=suggest-btn]').isVisible(), `${name}: tapping the handle shows the idea button`)
+  await p.locator('[data-testid=fb-handle]').tap(); await p.waitForTimeout(250)
+  await p.locator('[data-testid=summary-2]').tap(); await p.waitForTimeout(700); ok(await p.locator('[role=dialog]').count() > 0, `${name}: tapping “projected to lose money” opens the jobs behind it`); await p.screenshot({ path: `${out}ios-${tag}-drill.png` }); await p.keyboard.press('Escape'); await p.waitForTimeout(300)
+  // no input zoom: every text field ≥16px
+  await p.evaluate(() => { location.hash = '/branding' }); await p.waitForSelector('[data-testid=branding-page]')
+  const fs16 = await p.evaluate(() => [...document.querySelectorAll('input:not([type=checkbox]):not([type=radio]):not([type=color]):not([type=file]), select, textarea')].map(x => parseFloat(getComputedStyle(x).fontSize)))
+  ok(fs16.length > 0 && fs16.every(x => x >= 16), `${name}: inputs are ≥16px so iOS won't zoom (${fs16.length} fields)`)
+  await p.evaluate(() => { location.hash = '/union' }); await p.waitForSelector('[data-testid=union-mode]', { timeout: 20000 }); await p.click('[data-testid=union-mode] button:has-text("List")'); await p.waitForSelector('[data-testid=union-local]', { timeout: 20000 }); await p.locator('[data-testid=union-local]').first().tap(); await p.waitForTimeout(600)
+  ok(await p.locator('[data-testid=union-sheet]').isVisible(), `${name}: tap a union local → detail sheet`); await p.screenshot({ path: `${out}ios-${tag}-union-sheet.png` })
+  await p.keyboard.press('Escape')
+  await p.evaluate(() => window.__store.getState().signOut()); await p.waitForSelector('[data-testid=sup-logins] button')
+  await p.locator('[data-testid=sup-logins] button', { hasText: 'Brent Strawn' }).tap(); await p.waitForTimeout(1200)
+  ok(await p.evaluate(() => window.__store.getState().db.audit.some(a => a.action === 'Signed in' && a.actor === 'Brent Strawn' && /Brent Strawn/.test(a.detail))), `${name}: audit log names the supervisor (Brent Strawn)`)
+  ok(await p.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), `${name}: field app fits`); await p.screenshot({ path: `${out}ios-${tag}-field-brent.png` })
+  await ctx.close()
+}
+await wk.close()
+// projector / presentation mode (Chromium)
+const cr = await chromium.launch({ executablePath: '/usr/bin/google-chrome', args: ['--no-sandbox'] })
+for (const [w, h] of [[1920, 1080], [1280, 720]]) {
+  const ctx = await cr.newContext({ viewport: { width: w, height: h } }); const p = await ctx.newPage(); p.on('pageerror', e => errors.push(`${w}: ${e.message}`))
+  await p.addInitScript(() => { localStorage.setItem('sc-tour-seen', '1'); localStorage.setItem('sc-prefs', JSON.stringify({ ...JSON.parse(localStorage.getItem('sc-prefs') || '{}'), theme: 'light', mode: 'light' })) })
+  await p.goto(base); await p.click('[data-role=owner]'); await p.waitForTimeout(1000)
+  ok(await p.locator('[data-feedback-ui]').first().isVisible(), `${w}x${h}: feedback tabs visible before presenting`)
+  await p.click('[data-testid=present-btn]'); await p.waitForTimeout(400)
+  const st = await p.evaluate(() => ({ cls: document.documentElement.classList.contains('presenting'), fs: parseFloat(getComputedStyle(document.documentElement).fontSize), fb: [...document.querySelectorAll('[data-feedback-ui]')].some(x => x.offsetParent), over: document.documentElement.scrollWidth > innerWidth + 1, muted: getComputedStyle(document.documentElement).getPropertyValue('--muted').trim() }))
+  ok(st.cls && st.fs >= (w > 1440 ? 18 : 16.5) && !st.fb && !st.over, `${w}x${h}: presentation mode — ${st.fs}px base, feedback hidden, no overflow`)
+  ok(st.muted === '#374151', `${w}x${h}: light theme secondary text darkened for projectors (${st.muted})`)
+  const tiny = await p.evaluate(() => [...document.querySelectorAll('main *')].filter(el => !el.closest('.leaflet-control-attribution') && [...el.childNodes].some(n => n.nodeType === 3 && n.textContent.trim().length > 1) && el.getBoundingClientRect().width && parseFloat(getComputedStyle(el).fontSize) < 12).length)
+  ok(tiny === 0, `${w}x${h}: no text under 12px on the owner dashboard (${tiny})`)
+  await p.screenshot({ path: `${out}projector-${w}-command.png` })
+  await p.keyboard.press('Shift+P'); await p.waitForTimeout(200); ok(!(await p.evaluate(() => document.documentElement.classList.contains('presenting'))), `${w}x${h}: Shift+P toggles off`)
+  if (w === 1920) { await p.evaluate(() => { location.hash = '/settings' }); await p.waitForSelector('[data-testid=present-toggle]'); await p.locator('[role=switch]').filter({ has: p.locator('[data-testid=present-toggle]') }).click().catch(() => p.click('[data-testid=present-toggle]')); await p.waitForTimeout(300); ok(await p.evaluate(() => document.documentElement.classList.contains('presenting')), `Settings → Appearance has a Presentation mode switch`); await p.keyboard.press('Shift+P') }
+  await ctx.close()
+}
+await cr.close()
+ok(errors.length === 0, 'no page errors' + (errors.length ? ': ' + errors.slice(0, 3).join(' / ') : ''))
+console.log(fails.length ? `\n${fails.length} FAILED` : '\nALL PASSED'); process.exit(fails.length ? 1 : 0)
