@@ -2,6 +2,7 @@ import { toast } from 'sonner'
 
 /** Service worker with a demo-safe update flow: never swap code under the presenter — ask first. */
 export function registerSW() {
+  if (import.meta.env.VITE_PREVIEW_ISOLATE === '1') return // preview copy must not register a worker that could claim another site
   if (import.meta.env.VITE_GUEST_ONLY) return // guest-only page: no service worker
   if (import.meta.env.DEV || !('serviceWorker' in navigator)) return
   if (import.meta.env.MODE === 'standalone') { // single-file build: lightweight offline worker (network-first, cache fallback)
