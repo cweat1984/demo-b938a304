@@ -50,7 +50,8 @@ const boot = async (browser, opts) => {
   ok(hidden.rig == null && !hidden.gapHas && !hidden.photos.includes('staff-photo-keep'), 'guest tab cannot read staff rigging, permits, or background photos')
   await guest.evaluate(() => localStorage.removeItem('sc-guest-device'))
   await p.reload()
-  await p.waitForSelector('[data-role=owner]')
+  // The staff tab stays signed in across reload, so the role picker is not on screen. Wait until the store is ready.
+  await p.waitForFunction(() => window.__store?.getState?.().ready === true)
   const kept = await p.evaluate(async () => {
     const photos = await new Promise(res => {
       const r = indexedDB.open('sc-backgrounds')
@@ -105,7 +106,11 @@ const boot = async (browser, opts) => {
   const active = () => p.evaluate(() => [...document.querySelectorAll('[data-testid^=ftab-]')].find(el => el.className.includes('text-accent'))?.getAttribute('data-testid') || '')
   await p.tap('[data-testid=ftab-time]'); await p.waitForTimeout(250)
   await p.tap('[data-testid=ftab-ticket]'); await p.waitForTimeout(250)
-  await p.locator('[data-testid=tile-sds]').tap(); await p.waitForTimeout(400)
+  // Safety Sheets live on Home. The ticket tab opens today's ticket sheet when this person has a job.
+  const todayTicket = p.getByRole('button', { name: /Today ·/ })
+  if (await todayTicket.count()) await todayTicket.tap()
+  else { await p.tap('[data-testid=ftab-home]'); await p.locator('[data-testid=tile-sds]').tap() }
+  await p.waitForTimeout(400)
   ok(await p.locator('[data-testid=fsheet-back]').count() === 1, 'field sheet is open')
   await p.goBack(); await p.waitForTimeout(400)
   ok(await p.locator('[data-testid=fsheet-back]').count() === 0 && await active() === 'ftab-ticket', 'Back closes the sheet and stays on Ticket')
@@ -130,7 +135,16 @@ const boot = async (browser, opts) => {
     const live = st().db.jobs.filter(j => j.status !== 'Complete' && j.endDate >= T0)
     const [a, b] = live
     const crane = st().db.equipment.find(e => e.category === 'Crane' && e.status !== 'Out of Service')
-    set(db => ({ ...db, jobs: db.jobs.map(j => j.id === a.id ? { ...j, craneId: crane.id, craneIds: [crane.id], craneHours: undefined, startDate: T0, endDate: T0, status: 'On Site', stage: 'In Progress' } : j.id === b.id ? { ...j, craneId: crane.id, craneIds: [crane.id], craneHours: undefined, startDate: T0, endDate: T0, status: 'On Site', stage: 'In Progress' } : j) }))
+    const uses = (j) => j.craneId === crane.id || (j.craneIds ?? []).includes(crane.id) || (j.rig ?? []).some(p => p.craneId === crane.id)
+    const place = (j) => ({ ...j, craneId: crane.id, craneIds: [crane.id], craneHours: undefined, rig: [], startDate: T0, endDate: T0, status: 'On Site', stage: 'In Progress' })
+    set(db => ({ ...db, jobs: db.jobs.map(j => {
+      if (j.id === a.id || j.id === b.id) return place(j)
+      if (!uses(j)) return j
+      const craneIds = (j.craneIds ?? []).filter(id => id !== crane.id)
+      const rig = (j.rig ?? []).filter(p => p.craneId !== crane.id)
+      const craneHours = { ...(j.craneHours ?? {}) }; delete craneHours[crane.id]
+      return { ...j, craneId: j.craneId === crane.id ? craneIds[0] : j.craneId, craneIds, rig, craneHours }
+    }) }))
     return { a: a.jobNo, b: b.jobNo, crane: crane.id, rig: st().db.jobs.some(j => (j.rig ?? []).length) }
   })
   await p.evaluate(() => window.__store.getState().go('forecast'))
@@ -138,7 +152,9 @@ const boot = async (browser, opts) => {
   const clash = await p.locator(`[data-testid=fc-row][data-crane="${setup.crane}"] [data-testid=fc-bar][data-cat=conflict]`).count()
   ok(clash >= 2, `full-day overlap on one crane is red (${clash})`)
   await p.evaluate((s) => {
-    window.__store.setState(st => ({ db: { ...st.db, jobs: st.db.jobs.map(j => j.jobNo === s.a ? { ...j, craneHours: { [s.crane]: { from: '06:00', to: '11:00' } } } : j.jobNo === s.b ? { ...j, craneHours: { [s.crane]: { from: '12:00', to: '17:00' } } } : j) } }))
+    const site = window.__store.getState().db.jobs.find(j => j.jobNo === s.a)?.siteId
+    // Same site, so the drive-time rule is not what turns the bar red. The hours themselves do not overlap.
+    window.__store.setState(st => ({ db: { ...st.db, jobs: st.db.jobs.map(j => j.jobNo === s.a ? { ...j, siteId: site, craneHours: { [s.crane]: { from: '06:00', to: '11:00' } } } : j.jobNo === s.b ? { ...j, siteId: site, craneHours: { [s.crane]: { from: '12:00', to: '17:00' } } } : j) } }))
   }, setup)
   await p.waitForTimeout(300)
   const half = await p.locator(`[data-testid=fc-row][data-crane="${setup.crane}"] [data-testid=fc-bar][data-cat=conflict]`).count()

@@ -212,7 +212,7 @@ export default function Shell() {
         {/* top bar */}
         <header className="sticky top-0 z-40 h-[calc(4rem+env(safe-area-inset-top))] landscape-short:h-[calc(3rem+env(safe-area-inset-top))] pt-[env(safe-area-inset-top)] flex items-center gap-2 sm:gap-3 px-3 md:px-6 pl-[max(12px,env(safe-area-inset-left))] pr-[max(12px,env(safe-area-inset-right))] border-b hairline bg-bg/80 backdrop-blur-xl">
           {page !== rd.home
-            ? <button className="lg:hidden shrink-0 -ml-1 size-10 grid place-items-center rounded-full active:bg-surface-2" data-testid="page-back" aria-label="Back" onClick={() => useStore.getState().pageBack()}><ChevronLeft className="size-7" /></button>
+            ? <button className="lg:hidden shrink-0 -ml-1 size-[44px] grid place-items-center rounded-full active:bg-surface-2" data-testid="page-back" aria-label="Back" onClick={() => useStore.getState().pageBack()}><ChevronLeft className="size-7" /></button>
             : <button className="lg:hidden shrink-0 h-[44px] w-[44px] grid place-items-center -ml-2 rounded-xl" onClick={() => setMore(true)} aria-label="Menu" data-testid="hamburger"><Menu className="size-6" /></button>}
           <div className="lg:hidden shrink-0 hidden min-[420px]:block"><Logo size={28} /></div>
           <button onClick={() => setUI({ cmdOpen: true })} data-testid="ask" aria-label={`Ask ${company.assistantName} or search`} className="flex-1 min-w-0 max-w-xl flex items-center gap-3 h-10 px-3 sm:px-4 rounded-full bg-surface-2 border hairline text-muted hover:text-ink hover:border-faint/40 transition text-sm">

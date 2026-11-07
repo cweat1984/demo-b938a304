@@ -11,9 +11,6 @@
     <link rel="manifest" href="./manifest.webmanifest" />
     <meta name="apple-mobile-web-app-title" content="Southern Command" />
     <title>Southern Command · Southern Lifting & Hoisting</title>
-  </head>
-  <body>
-    <div id="root"></div>
     <script>
       // Runs before the module graph. Another site's frame never gets storage (Chrome denies it) or the app.
       (function () {
@@ -24,6 +21,9 @@
         window.stop()
       })()
     </script>
+  </head>
+  <body>
+    <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
