@@ -1,0 +1,76 @@
+// Gap B e2e: text-a-receipt + zero-report expenses, fuel cards/IFTA/mileage, PTO, OS/OW permits.
+import { chromium } from 'playwright'
+const base = process.env.BASE || 'http://localhost:4173/'
+const out = '/workspace/southern-app/screenshots/gapB/'
+const browser = await chromium.launch({ executablePath: '/usr/bin/google-chrome', args: ['--no-sandbox'] })
+const errors = [], fails = []
+const ok = (c, m) => { if (!c) fails.push(m); console.log((c ? 'ok   ' : 'FAIL ') + m) }
+const RUN = String(Date.now())
+const ctx = await browser.newContext({ viewport: { width: 1440, height: 950 }, deviceScaleFactor: 1.5 })
+await ctx.addInitScript(run => { if (localStorage.getItem('gb-run') !== run) { localStorage.removeItem('sc-gapb'); localStorage.setItem('gb-run', run) } }, RUN)
+const p = await ctx.newPage()
+p.on('pageerror', e => errors.push('pageerror: ' + e.message)); p.on('console', m => { if (m.type() === 'error' && !/tile|arcgis|Failed to load resource/i.test(m.text())) errors.push('console: ' + m.text()) })
+const shot = n => p.screenshot({ path: out + n + '.png' })
+const go = async h => { await p.evaluate(x => { location.hash = '/' + x }, h); await p.waitForTimeout(800) }
+const has = (sel, t = 6000) => p.locator(sel).first().waitFor({ timeout: t }).then(() => true, () => false)
+await p.goto(base); await p.waitForSelector('[data-role=ops]', { timeout: 15000 }); await p.click('[data-role=ops]'); await p.waitForTimeout(900)
+// 1) text-a-receipt + zero report
+await go('expenses'); await p.waitForSelector('[data-testid=text-receipt]')
+ok(await has('[data-testid=exp-exceptions]'), 'expenses opens on Exceptions view')
+await p.locator('[data-testid=tr-demo]').nth(0).click(); ok(await has('[data-testid=tr-app] >> text=/10125|10158|Job/'), 'text receipt auto-matched to job')
+await p.locator('[data-testid=tr-demo]').nth(1).click(); ok(await has('[data-testid=tr-app] >> text=Which job?'), 'ambiguous receipt asks "Which job?"')
+await shot('01-text-receipt-which-job')
+await p.fill('[data-testid=tr-reply]', '2'); await p.click('[data-testid=tr-send]'); ok(await has('[data-testid=tr-app] >> text=10158'), 'reply "2" files to 10158')
+await shot('02-reply-to-fix')
+await p.click('[data-testid=tr-ch-email]'); await p.locator('[data-testid=tr-demo]').nth(2).click(); await p.waitForTimeout(900)
+ok(await p.locator('[data-testid=exc-row]').count() >= 1, 'exceptions listed: ' + await p.locator('[data-testid=exc-row]').count())
+await shot('03-exceptions-only')
+await p.click('text=Filed by job'); ok(await has('[data-testid=job-group]'), 'auto-grouped by job & period'); await shot('04-filed-by-job')
+await p.click('text=Everything'); await p.waitForSelector('[data-testid=perdiem-rate]')
+await p.fill('[data-testid=perdiem-rate]', '65'); await p.waitForTimeout(300)
+await p.click('[data-testid=exp-perdiem]'); await p.waitForTimeout(400)
+ok(await p.locator('[data-testid=exp-row]', { hasText: 'flat $65/day' }).filter({ hasText: '195.00' }).count() > 0, 'per diem uses set flat rate ($65×3=$195)')
+await shot('05-perdiem-set-rate')
+// 2) fuel
+await go('fuel'); await p.waitForSelector('[data-testid=fuel-page]'); await shot('06-fuel-connectors')
+for (const n of ['WEX', 'Comdata', 'Coast']) await p.click(`[data-testid=fuel-connect-${n}]`).catch(() => {}), await p.waitForTimeout(700)
+ok(await p.locator('[data-testid=fuel-row]').count() > 10, 'fuel feed streams: ' + await p.locator('[data-testid=fuel-row]').count())
+ok(await p.locator('text=/Job \\d{5}/').count() > 0, 'fuel matched to job')
+await p.check('[data-testid=fuel-only-flags]'); await p.waitForTimeout(300)
+const flags = (await p.locator('[data-testid=fuel-flag]').allTextContents()).join(' | ')
+ok(/mi from|far/i.test(flags) && /tank/i.test(flags), 'flags far-from-truck + over-tank'); await shot('07-fuel-flags')
+await p.click('button:has-text("IFTA 20")'); ok(await p.locator('[data-testid=ifta-row]').count() >= 2, 'IFTA rows by state'); await shot('08-ifta-quarter')
+await p.click('text=GPS mileage'); await p.waitForSelector('[data-testid=trip-row]'); await p.locator('[data-testid=trip-add]').first().click(); await p.waitForTimeout(400)
+ok(await p.locator('[data-testid=mileage] >> text=In expenses').count() > 0, 'GPS trip filed to expenses'); await shot('09-gps-mileage')
+// 3) PTO
+await go('pto'); await p.waitForSelector('[data-testid=pto-page]')
+const d = new Date(); const iso = x => new Date(d.getTime() + x * 864e5).toLocaleDateString('en-CA')
+await p.fill('[data-testid=pto-from]', iso(0)); await p.fill('[data-testid=pto-to]', iso(1)); await shot('10-pto-phone-request')
+const before = await p.locator('[data-testid=pto-row]').count(); await p.click('[data-testid=pto-submit]'); await p.waitForTimeout(500)
+ok(await p.locator('[data-testid=pto-row]').count() === before + 1, 'PTO request pending')
+const empName = (await p.locator('[data-testid=pto-row]').last().locator('.font-semibold').first().textContent()).split(' · ')[0].trim()
+await p.locator('[data-testid=pto-row]').last().locator('[data-testid=pto-approve]').click(); await p.waitForTimeout(400)
+const warned = await p.locator('[data-testid=pto-coverage]').count() > 0
+if (warned) { await shot('11-pto-coverage-warning'); await p.click('[data-testid=pto-approve-anyway]'); await p.waitForTimeout(400) }
+ok(true, 'coverage check ' + (warned ? 'warned (modal)' : 'clear'))
+ok(await p.locator('text=/blocked on the dispatch board/').count() > 0, 'approved → blocked on dispatch & Smart Pickup'); await shot('12-pto-approved')
+await go('dispatch'); await p.waitForTimeout(800); const first = empName.split(' ')[0]
+ok(!!first && await p.locator(`text=${first}`).count() > 0, `${empName || 'employee'} shown on dispatch board`); await shot('13-dispatch-pto')
+// 4) permits
+await go('permits'); await p.waitForSelector('[data-testid=permits-page]'); await p.waitForTimeout(500)
+ok(await p.locator('[data-testid=permit-load]').count() > 0, 'loads computed from move'); await shot('14-permits-ok-route')
+await p.selectOption('[data-testid=permit-route]', 'r2'); await p.waitForTimeout(400)
+ok(await p.locator('[data-testid=permit-state] >> text=TX').count() > 0 && await p.locator('[data-testid=permit-state] >> text=Permit needed').count() > 0, 'multi-state permits needed')
+ok(await p.locator('[data-testid=escort-need]').count() > 0, 'escorts/pilot cars determined')
+ok(await p.locator('[data-testid=restrictions] >> text=/curfew|night|holiday|weekend/i').count() > 0, 'curfew notes shown')
+await shot('15-permits-multistate')
+await p.click('[data-testid=permit-order-all]'); await p.waitForTimeout(400)
+const jobs = new Set((await p.locator('[data-testid=permit-state] >> text=/Job \\d+/').allTextContents()).map(t => t.match(/Job (\d+)/)[1]))
+ok(jobs.size === 1, 'same-day/same-route permits share one job: ' + [...jobs])
+await p.locator('[data-testid=permit-issue]').first().click(); ok(await has('[data-testid=permit-state] >> text=Issued'), 'permit marked issued')
+await p.locator('[data-testid=escort-book]').first().click(); await p.waitForTimeout(300)
+ok(await p.locator('[data-testid=escort-need] >> text=Confirmed').count() > 0, 'escort booked from vendor list')
+await p.locator('[data-testid=escorts]').scrollIntoViewIfNeeded(); await shot('16-permits-ordered-escort-booked')
+ok(errors.length === 0, 'no console errors' + (errors.length ? ': ' + errors.slice(0, 3).join(' / ') : ''))
+await browser.close()
+console.log(fails.length ? `\n${fails.length} FAILED` : '\nALL PASSED'); process.exit(fails.length ? 1 : 0)

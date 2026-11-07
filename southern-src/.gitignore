@@ -1,0 +1,10 @@
+node_modules/
+dist/
+dist-*/
+*.tsbuildinfo
+.e2e-pin
+.e2e-keys.json
+.env*
+!.env.example
+screenshots/
+.vite/

@@ -1,0 +1,16 @@
+{
+  "name": "Southern Command — powered by Arrowline",
+  "short_name": "Southern Command",
+  "description": "Dispatch, cranes, crews, safety, time and shop — works offline in the field.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0b0d10",
+  "theme_color": "#0b0d10",
+  "icons": [
+    { "src": "arrowline-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "arrowline-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" },
+    { "src": "arrowline.svg", "sizes": "any", "type": "image/svg+xml" }
+  ]
+}

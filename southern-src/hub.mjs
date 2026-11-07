@@ -1,0 +1,17 @@
+import { chromium } from 'playwright'
+const b = await chromium.launch({ executablePath: '/usr/bin/google-chrome', args: ['--no-sandbox'] })
+const errs=[]
+const p = await (await b.newContext({ viewport: { width: 1600, height: 1000 } })).newPage()
+p.on('pageerror', e => errs.push(e.message)); p.on('console', m => m.type()==='error' && errs.push(m.text()))
+await p.goto('http://localhost:4173/'); await p.evaluate(()=>{localStorage.clear();indexedDB.deleteDatabase&&0}); await p.reload()
+await p.click('[data-role=owner]'); await p.waitForTimeout(2500)
+await p.screenshot({ path: '/workspace/southern-app/screenshots/command-okc.png' })
+console.log(await p.evaluate(()=>JSON.stringify(window.__sc.getState().filter)))
+await p.click('[data-hub=fleet]'); await p.waitForTimeout(900)
+await p.screenshot({ path: '/workspace/southern-app/screenshots/hub-fleet.png' })
+const m = await (await b.newContext({ viewport: { width: 390, height: 844 }, isMobile:true, hasTouch:true })).newPage()
+await m.goto('http://localhost:4173/'); await m.click('[data-role=owner]'); await m.waitForTimeout(1200)
+await m.evaluate(()=>{location.hash='/dispatch'}); await m.waitForTimeout(900)
+console.log('mobile scrollW', await m.evaluate(()=>document.documentElement.scrollWidth))
+await m.screenshot({ path: '/workspace/southern-app/screenshots/hub-mobile.png' })
+console.log(errs.length?errs:'no errors'); await b.close()
