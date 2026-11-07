@@ -20,7 +20,7 @@ export function useAlerts(): Alert[] {
     const out: Alert[] = []
     const t = today()
     const now = new Date().toISOString()
-    db.notices.filter(n => !n.empIds && (n.roles.includes(role) || role === 'owner')).forEach(n => out.push({ ...n }))
+    db.notices.filter(n => !n.empIds && (n.roles?.includes(role) || role === 'owner')).forEach(n => out.push({ ...n }))
     if (['owner', 'dispatch', 'ops'].includes(role)) {
       [...new Set(jobsOn(db, t).concat(jobsOn(db, addDays(t, 1))))].filter(j => inScope(j, scope)).forEach(j => {
         const d = j.startDate <= t && j.endDate >= t && jobsOn(db, t).includes(j) ? t : addDays(t, 1)

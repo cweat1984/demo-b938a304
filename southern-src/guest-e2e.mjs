@@ -46,7 +46,7 @@ await openDock(g); ok(await has(g, '[data-testid=suggest-btn]') && await has(g, 
 await openDock(g); await g.click('[data-testid=suggest-btn]'); ok(await has(g, '[data-testid=suggest-form]'), 'guest can open Suggest form'); await g.keyboard.press('Escape'); await g.screenshot({ path: out + '02-guest-banner-phone.png' })
 await g.reload(); ok(await has(g, '[data-testid=guest-banner]', 15000), 'pass survives reload')
 // tampered token
-const t2 = await gc.newPage(); await t2.goto(u(link).replace(/\.([\w-])/, '.A$1')); ok(await has(t2, '[data-testid=guest-locked]', 15000), 'tampered link → lockout'); await t2.close()
+const t2 = await gc.newPage(); await t2.goto(u(link).replace(/([?&]guest=[^.]*)\.([\w-])/, '$1.A$2')); ok(await has(t2, '[data-testid=guest-locked]', 15000), 'tampered link → lockout'); await t2.close()
 // expiry by timer (fake clock jumps past the 2h), then on load and on route change
 const sc = await browser.newContext({ viewport: { width: 1280, height: 800 } }); await sc.clock.install(); const s = await sc.newPage(); watch(s)
 await s.goto(u(link)); ok(await has(s, '[data-testid=guest-banner]', 15000), 'second browser: banner')

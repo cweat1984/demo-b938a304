@@ -10,34 +10,33 @@ const STAFF_DB = new Set(['sc-backgrounds', 'southern-command', 'sc-files'])
 function staffKey(k: string) {
   return k.startsWith('sc-') && !KEY_OK.test(k)
 }
+/** Revoked pass ids (not the signed links). Readable so this browser honors a revoke; not writable from a guest page. */
+const REV_READ = 'sc-guest-revoked'
 
 if (guestContext()) {
   const get = Storage.prototype.getItem
   const set = Storage.prototype.setItem
   const rm = Storage.prototype.removeItem
   Storage.prototype.getItem = function (k: string) {
-    if (this === localStorage && staffKey(k)) return null
+    if (this === localStorage && staffKey(k) && k !== REV_READ) return null
     return get.call(this, k)
   }
   Storage.prototype.setItem = function (k: string, v: string) {
-    if (this === localStorage && staffKey(k)) return
+    if (this === localStorage && (staffKey(k) || k === REV_READ)) return
     return set.call(this, k, v)
   }
   Storage.prototype.removeItem = function (k: string) {
-    if (this === localStorage && staffKey(k)) return
+    if (this === localStorage && (staffKey(k) || k === REV_READ)) return
     return rm.call(this, k)
   }
 
   const origOpen = IDBFactory.prototype.open
+  // A fresh empty database per guest page. Callers may create their own stores.
+  // Do not open or copy the staff databases, and do not pre-create stores (that collides with the caller's upgrade).
+  const part = sessionStorage.getItem('sc-guest-idb') || ('__sc_guest_' + Math.random().toString(36).slice(2))
+  try { sessionStorage.setItem('sc-guest-idb', part) } catch { /* private mode */ }
   IDBFactory.prototype.open = function (this: IDBFactory, name: string, version?: number) {
     if (!STAFF_DB.has(name)) return origOpen.call(this, name, version)
-    const req = origOpen.call(this, '__sc_guest_partition__', 1)
-    req.addEventListener('upgradeneeded', () => {
-      const db = req.result
-      if (!db.objectStoreNames.contains('photos')) db.createObjectStore('photos', { keyPath: 'id' })
-      if (!db.objectStoreNames.contains('kv')) db.createObjectStore('kv')
-      if (!db.objectStoreNames.contains('blobs')) db.createObjectStore('blobs')
-    })
-    return req
+    return origOpen.call(this, part, version ?? 1)
   }
 }

@@ -14,8 +14,13 @@ await p.locator('[data-testid=quote-card]').first().click(); await p.click('[dat
 await p.keyboard.press('Escape'); await p.waitForTimeout(300)
 await go('quotes'); const n1 = await p.locator('[data-testid=quote-card]').count(); if (n1 !== n0 - 1) throw new Error('quote not won'); ok('quote won → job')
 // lifts
-await go('lifts'); await p.locator('[data-testid=lift-row]').first().click(); await p.waitForTimeout(300)
-for (const t of ['Rigging inspected', 'Site walked', 'Wind limit set', 'Lift director']) await p.getByText(t, { exact: false }).first().click()
+await go('lifts'); await p.locator('[data-testid=lift-row]').filter({ hasNotText: 'No crane' }).first().click(); await p.waitForTimeout(300)
+// Approve stays off until every check is ticked and both chart and ground bearing are under 90%.
+await p.fill('[data-testid=lift-load]', '1'); await p.fill('[data-testid=lift-radius]', '30')
+const selects = p.locator('[data-testid=lift-plan] select')
+await selects.nth(0).selectOption('3'); await selects.nth(1).selectOption('6')
+const checks = p.locator('[data-testid=lift-plan] button').filter({ hasText: /Load weight verified|Rigging inspected|Site walked|Wind limit set|Lift director/ })
+for (let i = 0; i < await checks.count(); i++) { const b = checks.nth(i); if (!(await b.locator('.bg-ok-solid').count())) await b.click() }
 const before = (await st()).jobs.filter(j => j.liftPlan === 'Approved').length
 await p.click('[data-testid=lift-approve]'); await p.waitForTimeout(500)
 const after = (await st()).jobs.filter(j => j.liftPlan === 'Approved').length

@@ -1,4 +1,5 @@
 import { afterBack, FRAMED, setHash, memPages } from '../lib/backstack'
+import { clearUndo, noteRosterChange } from '../lib/undo'
 import { guestContext } from '../guest/pass'
 import { freshPage, clearKeep } from '../lib/keep'
 import type { ThemeKey, Mode, Palette } from './themes'
@@ -67,6 +68,28 @@ interface State {
 }
 
 let saveTimer: number | undefined
+let initStarted = false
+const REV_KEY = 'sc-db-rev'
+const PENDING_KEY = 'sc-db-pending'
+/** Remember the latest edit synchronously. IndexedDB may not finish before a reload; the rev says which copy is newer. */
+function remember(db: T.DB) {
+  try {
+    if (db.savedRev) localStorage.setItem(REV_KEY, String(db.savedRev))
+    localStorage.setItem(PENDING_KEY, JSON.stringify(db))
+  } catch { /* quota: the debounced IndexedDB save still runs */ }
+}
+function dropPendingIfCurrent(rev: number | undefined) {
+  try { if (rev && localStorage.getItem(REV_KEY) === String(rev)) localStorage.removeItem(PENDING_KEY) } catch { /* */ }
+}
+function readPending(): T.DB | null {
+  try { const raw = localStorage.getItem(PENDING_KEY); if (!raw) return null; const pend = JSON.parse(raw) as T.DB; return pend && typeof pend === 'object' ? pend : null } catch { return null }
+}
+/** Pending wins when it is the same demo set and at least as new as IndexedDB. A different seed (after Reset) does not come back. */
+function preferDb(base: T.DB, pend: T.DB | null): T.DB {
+  if (!pend || pend.version !== base.version || pend.seededAt !== base.seededAt) return base
+  if ((pend.savedRev ?? 0) >= (base.savedRev ?? 0)) return pend
+  return base
+}
 const loadPrefs = (): Prefs => { try { const p: Prefs = { ...DEFAULT_PREFS, ...JSON.parse(localStorage.getItem('sc-prefs') || '{}') }; if (p.theme !== 'system' && !THEMES.some(t => t.key === p.theme)) p.theme = 'slh'; return p } catch { return DEFAULT_PREFS } }
 /** `?as=field` embeds a signed-in role without touching this tab's session (used by the side-by-side live demo). */
 // only inside the live-demo frame (never a top-level tab), and never on a browser that opened a guest pass
@@ -101,14 +124,27 @@ export const useStore = create<State>((set, get) => ({
   prefs: loadPrefs(),
   ui: { page: 'command', drawer: null, drawerStack: [], filter: { divisionId: 'all', branchId: 'br-okc' }, cmdOpen: false, askQuery: null, breakdownOpen: false, jobBuilder: null, windFarm: null, online: navigator.onLine },
   async init() {
+    // React Strict Mode mounts twice in dev. A second init must not load an older snapshot over edits the first one already showed.
+    if (initStarted) return
+    initStarted = true
     // a guest tab never reads or writes the device's saved data: fresh demo data, in memory only
     let db = guestContext() ? freshSeed() : await localRepository.load()
-    // an edit flushed synchronously at pagehide (IndexedDB can't finish during unload) wins if it belongs to the same data set
-    try { const raw = localStorage.getItem('sc-db-pending'); if (raw) { localStorage.removeItem('sc-db-pending'); const pend = JSON.parse(raw) as T.DB; if (pend && pend.seededAt === db.seededAt && pend.version === db.version) { db = pend; void localRepository.save(db) } } } catch { /* ignore */ }
+    // an edit flushed synchronously at pagehide (IndexedDB can't finish during unload) wins if it belongs to the same data set.
+    // A reload can read IndexedDB before that write commits and can also see the pending key already cleared, so a rev that is still ahead is retried once.
+    if (!guestContext()) {
+      db = preferDb(db, readPending())
+      const rev = Number(localStorage.getItem(REV_KEY) || 0)
+      if (rev && (db.savedRev ?? 0) < rev) {
+        await new Promise(r => setTimeout(r, 150))
+        try { db = preferDb(await localRepository.load(), readPending()) } catch { /* keep the first copy */ }
+      }
+      const pend = readPending()
+      if (pend && pend.savedRev && pend.savedRev === db.savedRev) void localRepository.save(db)
+    }
     // schema check: any collection that isn't the right shape falls back to fresh seed data (per collection), never a white screen
     try { const ref = freshSeed() as unknown as Record<string, unknown>, cur = db as unknown as Record<string, unknown>; const bad = Object.keys(ref).filter(k => Array.isArray(ref[k]) ? !Array.isArray(cur[k]) || (typeof (ref[k] as unknown[])[0] === 'object' && (cur[k] as unknown[]).some(x => !x || typeof x !== 'object')) : ref[k] && typeof ref[k] === 'object' ? !cur[k] || typeof cur[k] !== 'object' : false); if (bad.length) { bad.forEach(k => { cur[k] = ref[k] }); void localRepository.save(db); setTimeout(() => window.dispatchEvent(new CustomEvent('sc-data-reset', { detail: bad })), 1500) } } catch { /* keep what loaded */ }
     // flush a pending debounced save when the tab is hidden, reloaded or closed (no 350 ms window of lost edits)
-    const flush = () => { if (guestTab() || (get().db as unknown as { __guest?: boolean })?.__guest) { clearTimeout(saveTimer); saveTimer = undefined; return } if (saveTimer !== undefined) { clearTimeout(saveTimer); saveTimer = undefined; try { localStorage.setItem('sc-db-pending', JSON.stringify(get().db)) } catch { /* quota: IndexedDB save below still runs */ } void localRepository.save(get().db).then(() => { try { localStorage.removeItem('sc-db-pending') } catch { /* */ } }) } }
+    const flush = () => { if (guestTab() || (get().db as unknown as { __guest?: boolean })?.__guest) { clearTimeout(saveTimer); saveTimer = undefined; return } if (saveTimer !== undefined) { clearTimeout(saveTimer); saveTimer = undefined; const snap = get().db; remember(snap); void localRepository.save(snap).then(() => dropPendingIfCurrent(snap.savedRev)) } }
     window.addEventListener('pagehide', flush); window.addEventListener('beforeunload', flush); document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') flush() })
     const s = get().session
     const hp = pageFromHash()
@@ -122,6 +158,9 @@ export const useStore = create<State>((set, get) => ({
       const m = ev.data as { db: T.DB; action: string; entity: string; detail: string; actor: string; quiet?: boolean }
       if (!m?.db || get().session?.role === 'guest') return // a guest tab keeps its scrubbed copy
       set({ db: m.db })
+      clearUndo()
+      clearTimeout(saveTimer); saveTimer = undefined
+      if (m.db.savedRev) remember(m.db)
       if (!m.quiet) window.dispatchEvent(new CustomEvent('southern-live', { detail: m }))
     }
     window.addEventListener('online', () => set({ ui: { ...get().ui, online: true } }))
@@ -136,6 +175,7 @@ export const useStore = create<State>((set, get) => ({
     })
   },
   signIn(role, method = 'Demo role', asEmployeeId?: string) {
+    clearUndo()
     if (role !== 'guest' && guestContext()) { console.warn('Staff sign-in is off on a guest-pass browser'); return }
     const rd = roleDef(role)
     const emp = asEmployeeId ? get().db.employees.find(e => e.id === asEmployeeId) : rd.empName ? get().db.employees.find(e => `${e.first} ${e.last}` === rd.empName) : undefined
@@ -148,6 +188,7 @@ export const useStore = create<State>((set, get) => ({
     get().commit('Signed in', asEmployeeId && emp ? `${rd.label} · ${emp.craft}` : rd.label, `${session.name} · ${method}`, () => {}, { silent: true })
   },
   guestSwitch(view) {
+    clearUndo()
     const s = get().session; if (s?.role !== 'guest') return
     const r = setGuestView(view)
     const emp = r.view === 'supervisor' ? get().db.employees.find(e => e.id === 'emp-2001') ?? get().db.employees.find(e => e.craft === 'Supervisor')
@@ -156,7 +197,7 @@ export const useStore = create<State>((set, get) => ({
     clearKeep(); try { sessionStorage.setItem('sc-session', JSON.stringify(session)) } catch { /* */ }
     set({ session, ui: { ...get().ui, page: r.home, drawer: null, drawerStack: [], cmdOpen: false, denied: null } }); setHash(`/${r.home}`); window.scrollTo({ top: 0 })
   },
-  signOut() { sessionStorage.removeItem('sc-session'); sessionStorage.removeItem(FILTER_KEY); sessionStorage.removeItem('sc-gp-unlocked'); clearKeep(); set({ session: null, ui: { ...get().ui, drawer: null, cmdOpen: false } }); setHash('') },
+  signOut() { clearUndo(); sessionStorage.removeItem('sc-session'); sessionStorage.removeItem(FILTER_KEY); sessionStorage.removeItem('sc-gp-unlocked'); clearKeep(); set({ session: null, ui: { ...get().ui, drawer: null, cmdOpen: false } }); setHash('') },
   go(page) { const from = get().ui.page; if (from === page) { set({ ui: { ...get().ui, denied: null, drawer: null, drawerStack: [], windFarm: null, cmdOpen: false } }); window.scrollTo({ top: 0 }); return } SCROLL[from] = window.scrollY; freshPage(page); set({ ui: { ...get().ui, page, denied: null, drawer: null, drawerStack: [], windFarm: null, cmdOpen: false } }); const depth = Number(history.state?.scDepth ?? 0) + 1; if (FRAMED) memPages.push(from); afterBack(() => setHash(`/${page}`, { scDepth: depth })); window.scrollTo({ top: 0 }) },
   pageBack() {
     const home = roleDef(get().session?.role ?? 'owner').home
@@ -174,7 +215,7 @@ export const useStore = create<State>((set, get) => ({
   back() { const u = get().ui; const st = [...u.drawerStack]; const prev = st.pop() ?? null; set({ ui: { ...u, drawer: prev, drawerStack: st } }) },
   setUI(p) { if (p.filter) saveFilter(get().session, p.filter); set({ ui: { ...get().ui, ...p } }) },
   setPrefs(p) { const prefs = { ...get().prefs, ...p }; localStorage.setItem('sc-prefs', JSON.stringify(prefs)); set({ prefs }) },
-  async resetDemo() { if (guestContext() || get().session?.role === 'guest') { console.warn('Reset demo is off for guests'); return } const db = await localRepository.reset(); set({ db, ui: { ...get().ui, drawer: null } })
+  async resetDemo() { if (guestContext() || get().session?.role === 'guest') { console.warn('Reset demo is off for guests'); return } clearUndo(); clearTimeout(saveTimer); saveTimer = undefined; try { localStorage.removeItem(PENDING_KEY); localStorage.removeItem(REV_KEY) } catch { /* */ } const db = await localRepository.reset(); set({ db, ui: { ...get().ui, drawer: null } })
     // dive3 S12: side stores (drug tests, rigging, moves, bids, NCCCO, union, offline queue, drafts…) live under their own sc-* keys — clear them too; keep this browser's settings (branding, security, passkeys, prefs)
     const KEEP = ['sc-prefs', 'sc-branding-v1', 'sc-security', 'sc-passkeys', 'sc-gp-lock', 'sc-guest-passes', 'sc-backgrounds', 'sc-sched-colors-v1', 'sc-nav-v1', 'sc-fbdock-y', 'sc-data-reset', 'sc-guest', 'sc-guest-locked']
     try { for (const st of [localStorage, sessionStorage]) for (const k of Object.keys(st)) if (k.startsWith('sc-') && !KEEP.includes(k) && k !== 'sc-session' && !k.startsWith('sc-db')) st.removeItem(k) } catch { /* private mode */ }
@@ -188,12 +229,16 @@ export const useStore = create<State>((set, get) => ({
     const diff = opts?.diff ?? (arrow ? [{ field: arrow[1] || action.replace(/^(Updated|Changed|Moved) /, ''), from: arrow[2], to: arrow[3] }] : undefined)
     db.audit.unshift({ id: uid('au'), at: new Date().toISOString(), actor: s?.name ?? 'System', role: s?.role ?? 'owner', action, entity, detail, diff })
     if (db.audit.length > 600) db.audit.length = 600
+    db.savedRev = Date.now()
     set({ db })
     if (guestTab()) return // guest copy is scrubbed + view-only: never broadcast or save it
     if (live && action !== 'Signed in' && action !== 'Read notification') { try { live.postMessage({ db, action, entity, detail, actor: s?.name ?? 'System', quiet: !!opts?.silent && action !== 'Clocked out' }) } catch { /* ignore */ } }
     clearTimeout(saveTimer)
     if (guestTab() || (get().db as unknown as { __guest?: boolean }).__guest) return
-    saveTimer = window.setTimeout(() => { saveTimer = undefined; if (guestTab() || (get().db as unknown as { __guest?: boolean }).__guest) return; void localRepository.save(get().db).then(() => { try { localStorage.removeItem('sc-db-pending') } catch { /* */ } }) }, 350)
+    // Durable even if the tab is killed before the debounced IndexedDB write. pagehide also flushes.
+    remember(db)
+    const rev = db.savedRev
+    saveTimer = window.setTimeout(() => { saveTimer = undefined; if (guestTab() || (get().db as unknown as { __guest?: boolean }).__guest) return; const snap = get().db; void localRepository.save(snap).then(() => dropPendingIfCurrent(snap.savedRev ?? rev)) }, 350)
   },
 }))
 
@@ -274,6 +319,8 @@ export const actions = {
     // anyone held after a post-accident / reasonable-suspicion test can't be scheduled until cleared (any employee, not only CDL)
     if (byId(db0.employees, empId)?.ssHold) { window.dispatchEvent(new CustomEvent('sc-held', { detail: emp(db0, empId) })); return }
     if (!schedulable(db0, empId, date)) return // dive3 S13: the store refuses Inactive / past-last-day too, not only the UI
+    const before = db0.assignments.map(a => ({ ...a }))
+    const label = `${opts.fromJobId ? 'Move' : 'Assign'} ${emp(db0, empId)} · ${position} · ${date}`
     S().commit(opts.fromJobId ? 'Moved employee (Dispatch confirmed)' : 'Assigned employee', `Job #${j.jobNo}`, `${emp(db0, empId)} → ${position}${opts.fromJobId ? ` (from Job #${jobNo(db0, opts.fromJobId)})` : ''}${opts.restOfJob ? ' · rest of job' : ` · ${date}`}`, db => {
       const dates = (opts.restOfJob ? range(date, j.endDate) : [date]).filter(d => schedulable(db, empId, d))
       dates.forEach(d => {
@@ -284,24 +331,29 @@ export const actions = {
       db.travel = db.travel.filter(t => !(t.employeeId === empId && dates.includes(t.date) && t.direction !== 'To Site'))
       crewNote(db, empId, `You’re on Job #${j.jobNo} — ${position}`, `${jobLine(db, j)} · ${opts.restOfJob ? `from ${dayLabel(date)} to the end of the job` : dayLabel(date)}${j.startTime ? ` · start ${j.startTime}` : ''}${opts.fromJobId ? ` · moved from Job #${jobNo(db, opts.fromJobId)}` : ''}`, j.id)
     })
+    noteRosterChange(label, before)
   },
   replaceCrew(jobId: string, fromEmp: string, toEmp: string, position: T.CrewPosition, dates: string[]) {
     const db0 = S().db; const j = byId(db0.jobs, jobId)!
     if (byId(db0.employees, toEmp)?.ssHold || dates.some(d => !schedulable(db0, toEmp, d))) return // dive3 S13
+    const before = db0.assignments.map(a => ({ ...a }))
     S().commit('Replaced crew member (Dispatch confirmed)', `Job #${j.jobNo}`, `${emp(db0, fromEmp)} → ${emp(db0, toEmp)} · ${position} · ${dates.length} day${dates.length > 1 ? 's' : ''}`, db => {
       db.assignments = db.assignments.filter(a => !(a.jobId === jobId && a.employeeId === fromEmp && dates.includes(a.date)))
       dates.forEach(d => { if (!db.assignments.some(a => a.employeeId === toEmp && a.date === d && a.jobId === jobId)) db.assignments.push({ id: uid('asg'), jobId, date: d, employeeId: toEmp, position, source: 'Dispatch' }) })
       crewNote(db, toEmp, `You’re on Job #${j.jobNo} — ${position}`, `${jobLine(db, j)} · ${dates.length > 1 ? `${dates.length} days from ${dayLabel(dates[0])}` : dayLabel(dates[0])}`, j.id)
       crewNote(db, fromEmp, `Change: you’re off Job #${j.jobNo}`, `${dates.length > 1 ? `${dates.length} days from ${dayLabel(dates[0])}` : dayLabel(dates[0])} · dispatch will call with your next job`, j.id)
     })
+    noteRosterChange(`Replace ${emp(db0, fromEmp)} with ${emp(db0, toEmp)}`, before)
   },
   unassign(jobId: string, date: string, empId: string, restOfJob = false) {
     const db0 = S().db
     const j = byId(db0.jobs, jobId)!
+    const before = db0.assignments.map(a => ({ ...a }))
     S().commit('Removed employee (Dispatch confirmed)', `Job #${j.jobNo}`, `${emp(db0, empId)} removed${restOfJob ? ' for rest of job' : ` on ${date}`} — returned to available pool`, db => {
       db.assignments = db.assignments.filter(a => !(a.jobId === jobId && a.employeeId === empId && (restOfJob ? a.date >= date : a.date === date)))
       crewNote(db, empId, `Change: you’re off Job #${j.jobNo}`, `${restOfJob ? `from ${dayLabel(date)} on` : dayLabel(date)} · dispatch will call with your next job`, j.id)
     })
+    noteRosterChange(`Remove ${emp(db0, empId)} · ${date}`, before)
   },
   setCrane(jobId: string, craneId: string, crewDecisions: { empId: string; position: T.CrewPosition; decision: 'move' | 'keep' }[], date: string) {
     const db0 = S().db
