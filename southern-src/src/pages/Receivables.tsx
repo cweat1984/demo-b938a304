@@ -20,7 +20,8 @@ export default function Receivables() {
   const [bucket, setBucket] = useState<string | null>(null)
   const [preview, setPreview] = useState<string | null>(null)
   const inv = useMemo(() => db.invoices.filter(i => inScope(byId(db.jobs, i.jobId), f)), [db, f])
-  const openInv = inv.filter(i => i.paid < i.amount)
+  const unsettled = (i: T.Invoice) => Math.abs(i.amount - i.paid) > 0.005
+  const openInv = inv.filter(unsettled)
   const totals = Object.fromEntries(BUCKETS.map(b => [b, openInv.filter(i => agingBucket(i) === b).reduce((s, i) => s + i.amount - i.paid, 0)]))
   const ar = openInv.reduce((s, i) => s + i.amount - i.paid, 0)
   // Ready to bill = work is done AND every ticket is customer-signed (customers pay for what they signed)
@@ -28,7 +29,7 @@ export default function Receivables() {
   // Complete but NOT billable — say why (unsigned / no tickets) so AR knows who to chase.
   const blocked = db.jobs.filter(j => inScope(j, f) && !j.invoiceNo && j.stage === 'Complete' && !ready.includes(j)).map(j => { const tk = db.tickets.filter(t => t.jobId === j.id), un = tk.filter(t => !t.signedAt); return { j, why: !tk.length ? 'No field tickets submitted' : `${un.length} of ${tk.length} ticket${tk.length > 1 ? 's' : ''} not customer-signed (${un.slice(0, 3).map(t => t.date.slice(5)).join(', ')}${un.length > 3 ? '…' : ''})` } })
   const paidMonth = inv.flatMap(i => i.payments).filter(p => p.date.slice(0, 7) === today().slice(0, 7)).reduce((s, p) => s + p.amount, 0)
-  const list = (tab === 'open' ? openInv.filter(i => !bucket || agingBucket(i) === bucket) : inv.filter(i => i.paid >= i.amount)).sort((a, b) => a.due.localeCompare(b.due))
+  const list = (tab === 'open' ? openInv.filter(i => !bucket || agingBucket(i) === bucket) : inv.filter(i => !unsettled(i))).sort((a, b) => a.due.localeCompare(b.due))
   return (
     <div className="max-w-[1400px] mx-auto">
       <PageHeader eyebrow="Accounts receivable" title={<span><span className="num">{money(ar, true)}</span> outstanding</span>} sub={`${openInv.length} open invoice${openInv.length === 1 ? "" : "s"} · ${money(paidMonth, true)} collected this month · ${ready.length} job${ready.length === 1 ? "" : "s"} ready to bill`} actions={<Button icon={<Download className="size-4" />} onClick={() => downloadCsv('ar-aging.csv', [['Invoice', 'Customer', 'Job', 'Date', 'Due', 'Amount', 'Paid', 'Balance', 'Aging', 'Collections'], ...openInv.map(i => [i.invNo, byId(db.customers, i.customerId)?.name, byId(db.jobs, i.jobId)?.jobNo, i.date, i.due, i.amount, i.paid, i.amount - i.paid, agingBucket(i), i.collections])])}>Aging export</Button>} />
