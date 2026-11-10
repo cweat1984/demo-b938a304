@@ -37,22 +37,25 @@ export default function Time() {
   const canApprove = role === 'payroll' || role === 'owner' || role === 'ops' || role === 'dispatch'
   const toggle = (id: string) => { const n = new Set(sel); n.has(id) ? n.delete(id) : n.add(id); setSel(n) }
   const approve = (ids: string[]) => { actions.approveTime(ids); toast.success(`${ids.length} entries approved`, { description: 'Hours posted to job costing' }); setSel(new Set()) }
-  /** dive3 acct m7: Paychex Flex payroll-import layout — one line per worker per pay component (Hourly / Overtime / Per Diem) for the
-   *  week's exported (locked) time, all branches you run payroll for. Builds a file only; nothing is re-sent or re-locked. */
+  /** Paychex Flex demo layout — one line per worker, per job, per pay component for the week's exported time.
+   *  Overtime is over 40 hours in the week (the Time screen's rule), applied in date order and charged to that day's job.
+   *  This is not a daily-after-10 rule; confirm with payroll before import if the company pays daily OT instead. */
   const paychexNow = () => {
     const session = useStore.getState().session!, auth = scopeFor(db, session.role, session.employeeId)
     const authBranches = auth.branchId === 'all' ? db.branches : db.branches.filter(b => b.id === auth.branchId)
     const done = db.time.filter(t => t.date >= wk && t.date <= end && t.status === 'Exported' && authBranches.some(b => b.id === byId(db.employees, t.employeeId)?.branchId))
     if (!done.length) { toast('Export the week first', { description: 'The Paychex file only carries locked (exported) time' }); return }
-    const per = new Map<string, { reg: number; ot: number; pd: number; jobs: Set<string> }>(), wkH = new Map<string, number>()
+    const per = new Map<string, { empId: string; reg: number; ot: number; pd: number; job: string }>(), wkH = new Map<string, number>()
     for (const t of [...done].sort((x, y) => (x.date + x.start).localeCompare(y.date + y.start))) { const h0 = wkH.get(t.employeeId) ?? 0, reg = Math.max(0, Math.min(t.hours, 40 - h0)); wkH.set(t.employeeId, h0 + t.hours)
-      const a = per.get(t.employeeId) ?? { reg: 0, ot: 0, pd: 0, jobs: new Set<string>() }; a.reg += reg; a.ot += t.hours - reg; a.pd += t.perDiems.reduce((x, p) => x + PER_DIEM_RATES[p], 0); const jn = byId(db.jobs, t.jobId)?.jobNo; if (jn) a.jobs.add(jn); per.set(t.employeeId, a) }
+      const job = byId(db.jobs, t.jobId)?.jobNo ?? ''
+      const key = `${t.employeeId}\t${job}`
+      const a = per.get(key) ?? { empId: t.employeeId, reg: 0, ot: 0, pd: 0, job }; a.reg += reg; a.ot += t.hours - reg; a.pd += t.perDiems.reduce((x, p) => x + PER_DIEM_RATES[p], 0); per.set(key, a) }
     const r2 = (n: number) => Math.round(n * 100) / 100, client = 'DEMO-CLIENT'
     const rows: (string | number)[][] = []
-    per.forEach((a, id) => { const e = byId(db.employees, id)!; const rate = e.rate ?? 0, job = [...a.jobs].join(' ')
-      if (a.reg > 0) rows.push([client, e.empNo, fullName(e), 'Hourly', r2(a.reg), rate, r2(a.reg * rate), end, job])
-      if (a.ot > 0) rows.push([client, e.empNo, fullName(e), 'Overtime', r2(a.ot), r2(rate * 1.5), r2(a.ot * rate * 1.5), end, job])
-      if (a.pd > 0) rows.push([client, e.empNo, fullName(e), 'Per Diem', '', '', r2(a.pd), end, job]) })
+    per.forEach(a => { const e = byId(db.employees, a.empId)!; const rate = e.rate ?? 0
+      if (a.reg > 0) rows.push([client, e.empNo, fullName(e), 'Hourly', r2(a.reg), rate, r2(a.reg * rate), end, a.job])
+      if (a.ot > 0) rows.push([client, e.empNo, fullName(e), 'Overtime', r2(a.ot), r2(rate * 1.5), r2(a.ot * rate * 1.5), end, a.job])
+      if (a.pd > 0) rows.push([client, e.empNo, fullName(e), 'Per Diem', '', '', r2(a.pd), end, a.job]) })
     rows.push(['DEMO — unverified', 'DEMO-CLIENT is a placeholder. Hourly, Overtime, and Per Diem are not a confirmed Paychex company mapping. Do not import into payroll until that mapping is confirmed.'])
     downloadCsv(`paychex-flex-${wk}.csv`, [['Client ID', 'Worker ID', 'Worker Name', 'Pay Component', 'Hours', 'Rate', 'Amount', 'Check Date / Period End', 'Job Number'], ...rows])
     toast.success(`Demo Paychex file · unverified · ${per.size} workers · ${rows.length - 1} lines`, { description: 'Placeholder client DEMO-CLIENT. Pay components Hourly, Overtime, Per Diem must be confirmed against the real Paychex company before use.' })
