@@ -36,7 +36,7 @@ export function useAlerts(): Alert[] {
       if (exp.length) out.push({ id: 'certs', severity: 'Upcoming', title: `${exp.filter(c => certBand(c).band === 'expired').length} expired · ${exp.filter(c => certBand(c).band === '30').length} expiring within 30 days`, body: 'Certifications — renew before people can be dispatched.', mandatory: true, read: false, at: now, page: 'safety' })
     }
     if (['owner', 'shop', 'dispatch'].includes(role)) {
-      const due = db.equipment.filter(e => serviceStatus(e).overdue)
+      const due = db.equipment.filter(e => inScope(e, scope) && serviceStatus(e).overdue)
       if (due.length) out.push({ id: 'svc', severity: 'Upcoming', title: `${due.length} units past service interval`, body: due.slice(0, 5).map(e => e.unit).join(', ') + (due.length > 5 ? '…' : ''), mandatory: false, read: false, at: now, page: 'shop' })
     }
     if (['owner', 'accounting'].includes(role)) {
