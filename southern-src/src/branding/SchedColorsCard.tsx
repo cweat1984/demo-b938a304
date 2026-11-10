@@ -15,7 +15,8 @@ export function SchedColorsCard() {
   const save = () => actions.updateCompany({ schedColors: { ...useSchedColors.getState().colors } })
   const apply = (cat: SchedCat, hex: string) => { const v = hex.trim().startsWith('#') ? hex.trim() : '#' + hex.trim(); const p = set(cat, v)
     if (p) { setErr({ cat, msg: p }); return } setErr(null); setDraft(d => ({ ...d, [cat]: undefined }))
-    clearTimeout(timers.current[cat]); timers.current[cat] = setTimeout(() => { save(); audit('Schedule color changed', 'Company branding', `${SCHED_CATS.find(c => c.id === cat)!.label} → ${useSchedColors.getState().colors[cat].toUpperCase()}`) }, 700) }
+    save() // company palette has to be written before a reload; the audit line can wait
+    clearTimeout(timers.current[cat]); timers.current[cat] = setTimeout(() => { audit('Schedule color changed', 'Company branding', `${SCHED_CATS.find(c => c.id === cat)!.label} → ${useSchedColors.getState().colors[cat].toUpperCase()}`) }, 700) }
   const sample: SchedCat[] = ['travel', 'moving', 'moving', 'working', 'working', 'working', 'outstate', 'outstate', 'moving', 'open', 'open', 'off', 'conflict', 'working']
   return <Card className="flex flex-col gap-3" data-testid="sched-colors">
     <div><div className="font-semibold">Schedule colors</div><div className="text-xs text-muted">Used on the crane forecast, 30-day strips and rig plans. Red always means a conflict — it can’t be used for anything else, and colors must be easy to tell apart. Saved for the whole company, so every screen matches.</div></div>
