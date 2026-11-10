@@ -1,6 +1,7 @@
 /** In-memory roster undo. Not written to localStorage. Cleared on role change, reset, and when another tab replaces the database.
  *  Phase one covers dispatch roster edits only (assign, move, replace, unassign). Audit rows are never deleted. */
 import { useStore } from '../data/store'
+import { absenceOn } from '../data/logic'
 import type { Assignment } from '../data/types'
 
 const MAX = 30
@@ -54,6 +55,8 @@ function conflict(added: Assignment[], removed: Assignment[]) {
   for (const a of removed) {
     const person = db.employees.find(e => e.id === a.employeeId)
     if (!person || person.ssHold || person.status === 'Inactive') return 'That person can’t be put back on the board'
+    if (absenceOn(db, a.employeeId, a.date)) return 'That person is off that day'
+    if (db.assignments.some(x => x.employeeId === a.employeeId && x.date === a.date && x.jobId !== a.jobId)) return 'That person is already on another job that day'
     if (db.assignments.some(x => x.id === a.id || (x.employeeId === a.employeeId && x.jobId === a.jobId && x.date === a.date))) return 'That seat is already filled'
   }
   return ''
@@ -117,6 +120,7 @@ export function installUndoKeys() {
     const t = e.target as HTMLElement | null
     if (t?.closest('input, textarea, select, [contenteditable="true"]')) return
     if (t?.isContentEditable) return
+    if (document.querySelector('[role="dialog"]')) return
     const mod = e.ctrlKey || e.metaKey
     if (!mod || e.altKey) return
     const key = e.key.toLowerCase()

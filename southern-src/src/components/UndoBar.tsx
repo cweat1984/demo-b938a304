@@ -1,4 +1,4 @@
-import { useEffect, useState, useSyncExternalStore } from 'react'
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { Undo2, Redo2, Keyboard } from 'lucide-react'
 import { toast } from 'sonner'
 import { installUndoKeys, redoRoster, subscribeUndo, undoRoster, undoState } from '../lib/undo'
@@ -9,6 +9,7 @@ export default function UndoBar() {
   const guest = useStore(s => s.session?.role === 'guest')
   const snap = useSyncExternalStore(subscribeUndo, undoState, undoState)
   const [help, setHelp] = useState(false)
+  const lastClick = useRef(0)
   useEffect(() => installUndoKeys(), [])
   useEffect(() => {
     const on = (e: Event) => toast('Couldn’t undo that', { description: (e as CustomEvent<string>).detail })
@@ -17,6 +18,7 @@ export default function UndoBar() {
   }, [])
   if (guest || !useStore.getState().session) return null
   const run = (which: 'undo' | 'redo') => {
+    const n = Date.now(); if (n - lastClick.current < 400) return; lastClick.current = n
     const why = which === 'undo' ? undoRoster() : redoRoster()
     if (why) toast('Couldn’t undo that', { description: why })
   }
