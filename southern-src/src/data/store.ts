@@ -1162,9 +1162,10 @@ export const actions = {
     const db0 = S().db; const j = byId(db0.jobs, jobId)!
     const tickets = db0.tickets.filter(t => t.jobId === jobId && (t.signerName || t.signedAt))
     // Bill what the customer signed: one day per distinct signed-ticket date (fallback to scheduled days only when nothing is signed).
-    const signedDays = new Set(tickets.map(t => t.date)).size
+    const signedDates = new Set(tickets.map(t => t.date))
+    const signedDays = signedDates.size
     const days = signedDays || Math.min(diffDays(j.endDate, j.startDate) + 1, Math.max(1, diffDays(today(), j.startDate) + 1))
-    return [{ description: `${j.craneId ? 'Crane & crew' : 'Crew & equipment'} day rate — ${days} days (${signedDays ? `${signedDays} signed ticket days` : 'no signed tickets — verify'})`, qty: days, rate: j.dayRate }, ...(j.quote.mobDemob ? [{ description: 'Mobilization / demobilization', qty: 1, rate: j.quote.mobDemob }] : []), ...customerExtraLines(j)]
+    return [{ description: `${j.craneId ? 'Crane & crew' : 'Crew & equipment'} day rate — ${days} days (${signedDays ? `${signedDays} signed ticket days` : 'no signed tickets — verify'})`, qty: days, rate: j.dayRate }, ...(j.quote.mobDemob ? [{ description: 'Mobilization / demobilization', qty: 1, rate: j.quote.mobDemob }] : []), ...customerExtraLines(j, undefined, signedDays ? signedDates : undefined)]
   },
   createInvoice(jobId: string, o?: { lines?: T.Invoice['lines']; customerPo?: string }) {
     const db0 = S().db
