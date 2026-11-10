@@ -78,7 +78,7 @@ function Nav() {
   return (
     <Card pad={false} className="overflow-hidden">
       <div className="px-5 py-4 border-b hairline text-sm text-muted">Reorder or hide menu items for <b className="text-ink">{rd.label}</b>. Locked items stay visible because they carry mandatory alerts.</div>
-      {order.map((k, i) => { const p = PAGES.find(x => x.key === k)!; const locked = LOCKED_PAGES.includes(k); return (
+      {order.map((k, i) => { const p = PAGES.find(x => x.key === k); if (!p) return null; const locked = LOCKED_PAGES.includes(k); return (
         <div key={k} className={cn('flex items-center gap-3 px-5 py-2.5 border-b hairline last:border-0', hidden.has(k) && 'opacity-50')}>
           <span className="flex-1 font-medium">{p.label}</span>
           {locked && <Badge><Lock className="size-3" />Required</Badge>}
