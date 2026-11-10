@@ -35,13 +35,14 @@ export default function Inventory() {
   const [kiosk, setKiosk] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
   const okc = db.items.filter(i => (i.branchId ?? 'br-okc') === brId)
+  const atBranch = (itemId?: string) => (byId(db.items, itemId)?.branchId ?? 'br-okc') === brId
   const items = useMemo(() => okc.filter(i => (cat === 'all' || (cat === 'low' ? isLow(i) && !i.oos : i.category === cat)) && (!q || `${i.name} ${i.sku} ${i.manufacturer} ${i.bin} ${i.sub ?? ''}`.toLowerCase().includes(q.toLowerCase()))), [okc, cat, q])
-  const out = db.checkouts.filter(c => isOpen(c))
+  const out = db.checkouts.filter(c => isOpen(c) && atBranch(c.itemId))
   const outRet = out.filter(c => c.returnable)
   const overdue = outRet.filter(c => c.due < today())
   const ls = lowStock(db, brId); const low = ls.low
   const inspDue = okc.filter(i => i.inspectionDue && i.inspectionDue <= addDays(today(), 14))
-  const shrink30 = shrinkMoves(db).filter(m => m.at >= addDays(today(), -30)).reduce((s, m) => s + -m.qty * m.unitCost, 0)
+  const shrink30 = shrinkMoves(db).filter(m => m.at >= addDays(today(), -30) && (m.branchId ?? 'br-okc') === brId).reduce((s, m) => s + -m.qty * m.unitCost, 0)
   const onScan = (code: string) => {
     setScan(false); const h = resolveScan(db, code)
     if (h.kind === 'item') { open({ type: 'item', id: h.item.id }); return }
@@ -77,7 +78,7 @@ export default function Inventory() {
         <Kpi label="Overdue" value={overdue.length} tone={overdue.length ? 'bad' : undefined} onClick={() => setTab('out')} testid="kpi-overdue" />
         <Kpi label="Inspections due" value={inspDue.length} tone={inspDue.length ? 'warn' : undefined} sub="rigging · 14 days" onClick={() => setTab('reports')} />
         <Kpi label="Shrink · 30 days" value={money(shrink30)} tone={shrink30 > 0 ? 'bad' : undefined} onClick={() => setTab('reports')} />
-        <Kpi label="Open POs" value={db.pos.filter(poIsOpen).length} sub="Purchasing" onClick={() => { deepLink.purch = 'pos'; go('purchasing') }} />
+        <Kpi testid="kpi-pos" label="Open POs" value={db.pos.filter(p => poIsOpen(p) && p.branchId === brId).length} sub="Purchasing" onClick={() => { deepLink.purch = 'pos'; go('purchasing') }} />
       </div>
       <Tip id="inv-stock" className="mb-4">Every row is one item in one bin. Red numbers are at or below <b>min</b> — they show up in Purchasing → Reorder. Tap any row for photo, location, who has it and full history.</Tip>
       <Segmented className="mb-4" value={tab} onChange={setTab} options={[{ value: 'stock', label: 'Stock' }, { value: 'out', label: 'Who has what', count: outRet.length }, { value: 'ledger', label: 'Ledger' }, { value: 'count', label: 'Cycle count', count: (db.cycleCounts ?? []).filter(c => c.status === 'Due').length || undefined }, { value: 'reports', label: 'Reports' }]} />
