@@ -23,12 +23,18 @@ export default function AcctSync() {
   // approved expenses from the Expenses screen flow in automatically
   const exps = useL2(s => s.expenses)
   useEffect(() => { const have = new Set(useB4.getState().sync.map(s => s.ref)); const add = exps.filter(e => e.status === 'Approved' && !have.has(`EXP-${e.id}`)); if (add.length) useB4.setState(s => ({ sync: [...add.map(e => ({ id: e.id + '-s', kind: 'Approved expense' as const, ref: `EXP-${e.id}`, amount: e.amount, target: 'QuickBooks' as const, status: 'Queued' as const, attempts: 0, at: new Date().toISOString() })), ...s.sync] })) }, [exps])
-  // office fixes: invoices created in the app and bill payments recorded in AP queue for QuickBooks too (once each)
+  // office fixes: invoices and bill payments queue for QuickBooks once each, keyed by payment id so a blank reference cannot hide a second payment. Undoing a payment drops its row.
   useEffect(() => {
-    const have = new Set(useB4.getState().sync.map(s => s.ref))
-    const inv = db.invoices.filter(i => i.id.includes('_') && i.status !== 'Draft' && !have.has(i.invNo)).map(i => ({ id: i.id + '-s', kind: 'Invoice' as const, ref: i.invNo, amount: i.amount, target: 'QuickBooks' as const, status: 'Queued' as const, attempts: 0, at: new Date().toISOString() }))
-    const bp = db.bills.flatMap(b => (b.payments ?? []).filter(p => p.id && !have.has(`${b.billNo} · ${p.method} ${p.ref}`.trim())).map(p => ({ id: p.id + '-s', kind: 'Bill' as const, ref: `${b.billNo} · ${p.method} ${p.ref}`.trim(), amount: p.amount, target: 'QuickBooks' as const, status: 'Queued' as const, attempts: 0, at: new Date().toISOString() })))
-    if (inv.length || bp.length) useB4.setState(s => ({ sync: [...inv, ...bp, ...s.sync] }))
+    const payIds = new Set(db.bills.flatMap(b => (b.payments ?? []).map(p => p.id).filter((id): id is string => !!id)))
+    useB4.setState(s => {
+      const kept = s.sync.filter(row => !(row.kind === 'Bill' && row.id.endsWith('-s') && !payIds.has(row.id.slice(0, -2))))
+      const haveId = new Set(kept.map(row => row.id))
+      const haveRef = new Set(kept.map(row => row.ref))
+      const inv = db.invoices.filter(i => i.id.includes('_') && i.status !== 'Draft' && !haveRef.has(i.invNo)).map(i => ({ id: i.id + '-s', kind: 'Invoice' as const, ref: i.invNo, amount: i.amount, target: 'QuickBooks' as const, status: 'Queued' as const, attempts: 0, at: new Date().toISOString() }))
+      const bp = db.bills.flatMap(b => (b.payments ?? []).filter(p => p.id && !haveId.has(p.id + '-s')).map(p => ({ id: p.id + '-s', kind: 'Bill' as const, ref: `${b.billNo} · ${p.id}`, amount: p.amount, target: 'QuickBooks' as const, status: 'Queued' as const, attempts: 0, at: new Date().toISOString() })))
+      if (!inv.length && !bp.length && kept.length === s.sync.length) return s
+      return { sync: [...inv, ...bp, ...kept] }
+    })
   }, [db.invoices, db.bills])
   const connect = (k: 'qb' | 'paychex') => { setBusy(k); setTimeout(() => { useB4.getState().connect(k, !conn[k]); setBusy(null); toast.success(conn[k] ? 'Disconnected' : `${k === 'qb' ? 'QuickBooks Online' : 'Paychex Flex'} connected (simulated OAuth)`) }, 900) }
   const counts = { Queued: sync.filter(s => s.status === 'Queued').length, Synced: sync.filter(s => s.status === 'Synced').length, Failed: sync.filter(s => s.status === 'Failed').length }
