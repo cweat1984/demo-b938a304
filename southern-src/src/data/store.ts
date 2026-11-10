@@ -225,7 +225,7 @@ export const useStore = create<State>((set, get) => ({
   setPrefs(p) { const prefs = { ...get().prefs, ...p }; localStorage.setItem('sc-prefs', JSON.stringify(prefs)); set({ prefs }) },
   async resetDemo() { if (guestContext() || get().session?.role === 'guest') { console.warn('Reset demo is off for guests'); return } clearUndo(); clearTimeout(saveTimer); saveTimer = undefined; try { localStorage.removeItem(PENDING_KEY); localStorage.removeItem(REV_KEY) } catch { /* */ } const db = await localRepository.reset(); set({ db, ui: { ...get().ui, drawer: null } })
     // dive3 S12: side stores (drug tests, rigging, moves, bids, NCCCO, union, offline queue, drafts…) live under their own sc-* keys — clear them too; keep this browser's settings (branding, security, passkeys, prefs)
-    const KEEP = ['sc-prefs', 'sc-branding-v1', 'sc-security', 'sc-passkeys', 'sc-gp-lock', 'sc-guest-passes', 'sc-backgrounds', 'sc-sched-colors-v1', 'sc-nav-v1', 'sc-fbdock-y', 'sc-data-reset', 'sc-guest', 'sc-guest-locked']
+    const KEEP = ['sc-prefs', 'sc-branding-v1', 'sc-brand-presets-v1', 'sc-security', 'sc-passkeys', 'sc-gp-lock', 'sc-guest-passes', 'sc-backgrounds', 'sc-sched-colors-v1', 'sc-nav-v1', 'sc-fbdock-y', 'sc-data-reset', 'sc-guest', 'sc-guest-locked']
     try { for (const st of [localStorage, sessionStorage]) for (const k of Object.keys(st)) if (k.startsWith('sc-') && !KEEP.includes(k) && k !== 'sc-session' && !k.startsWith('sc-db')) st.removeItem(k) } catch { /* private mode */ }
   },
   commit(action, entity, detail, recipe, opts) {
