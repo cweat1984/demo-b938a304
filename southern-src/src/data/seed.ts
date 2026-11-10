@@ -795,8 +795,8 @@ export function seed(): T.DB {
 
   // ---------- HR ----------
   const hires: T.Hire[] = [
-    { id: 'hire-1', first: 'Caleb', last: 'Riggins', email: emailFor('Caleb', 'Riggins'), empNo: `SLH-${empSeq++}`, craft: 'Rigger', start: addDays(T0, 2), phone: '(405) 555-2231', supervisorId: supOKC[1].id, steps: { account: true, profile: true, id: true, emergency: true, sizes: false, training: false, sds: false }, created: ts(-3, 9) },
-    { id: 'hire-2', first: 'Maria', last: 'Delacruz', email: emailFor('Maria', 'Delacruz'), empNo: `SLH-${empSeq++}`, craft: 'Truck Driver', start: addDays(T0, 6), phone: '(432) 555-2290', supervisorId: supMID[0].id, steps: { account: true, profile: false, id: false, emergency: false, sizes: false, training: false, sds: false }, created: ts(-1, 14) },
+    { id: 'hire-1', first: 'Caleb', last: 'Riggins', email: emailFor('Caleb', 'Riggins'), empNo: `SLH-${empSeq++}`, craft: 'Rigger', start: addDays(T0, 2), phone: '(405) 555-2231', supervisorId: supOKC[1].id, branchId: 'br-okc', steps: { account: true, profile: true, id: true, emergency: true, sizes: false, training: false, sds: false }, created: ts(-3, 9) },
+    { id: 'hire-2', first: 'Maria', last: 'Delacruz', email: emailFor('Maria', 'Delacruz'), empNo: `SLH-${empSeq++}`, craft: 'Truck Driver', start: addDays(T0, 6), phone: '(432) 555-2290', supervisorId: supMID[0].id, branchId: 'br-mid', steps: { account: true, profile: false, id: false, emergency: false, sizes: false, training: false, sds: false }, created: ts(-1, 14) },
   ]
   const pto: T.PtoRequest[] = []
   r.shuffle(field.filter(e => e !== john)).slice(0, 9).forEach((e, i) => { const from = addDays(T0, r.int(3, 40)); const d = r.int(1, 5); pto.push({ id: `pto-${i + 1}`, employeeId: e.id, from, to: addDays(from, d - 1), kind: r.pick(['Vacation', 'Vacation', 'Personal', 'Sick'] as const), hours: d * 10, status: i < 4 ? 'Pending' : i < 8 ? 'Approved' : 'Denied', requestedAt: ts(-r.int(0, 8), 8), decidedBy: i >= 4 ? 'Dana Whitfield' : undefined, note: i === 8 ? 'Denied — coverage: 3 operators already off that week' : undefined }) })
