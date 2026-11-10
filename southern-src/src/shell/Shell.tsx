@@ -225,7 +225,7 @@ export default function Shell() {
           <GuestSwitchChip />
           <div className="flex-1 hidden md:block" />
           {session.role !== 'guest' && <OrgFilter />}
-          {!online && <span className="hidden sm:inline-flex items-center gap-1.5 text-xs font-semibold text-warn"><WifiOff className="size-4" />Offline — changes saved on device</span>}
+          {!online && <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-warn"><WifiOff className="size-4" />Offline — changes saved on device</span>}
           <SyncChip />
           {rd.emergency && (
             <button onClick={() => setUI({ breakdownOpen: true })} aria-label="Emergency" className="shrink-0 inline-flex items-center gap-2 h-10 px-3 md:px-4 rounded-full bg-bad-solid text-white text-sm font-semibold hover:brightness-110 shadow-[0_8px_24px_-10px_#ef4444]" data-testid="emergency">
