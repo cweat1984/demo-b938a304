@@ -6,6 +6,7 @@ import { motion } from 'motion/react'
 import { ArrowUpRight, ArrowDownRight, AlertTriangle, Siren, ChevronRight, Radio, Play, Sparkles, MonitorSmartphone } from 'lucide-react'
 import { useStore } from '../data/store'
 import { jobsOn, inScope, jobCosting, yearSeries, isLive, MONTHS, groupProfit, trailing12, customerOf, costJobs, jobConflicts } from '../data/logic'
+import { jobCranes } from '../data/rig'
 import { today, money, fmtLong, cn } from '../lib/util'
 import { Card, Segmented, Badge, Button, useIsMobile } from '../components/ui'
 import FleetMap from '../components/FleetMap'
@@ -38,7 +39,7 @@ export default function Command() {
   const units = useMemo(() => db.equipment.filter(e => inScope(e, f) && (layer === 'all' ? e.category !== 'Trailer' || e.status === 'In Transit' : layer === 'cranes' ? e.category === 'Crane' : e.category === 'Semi' || e.category === 'Pickup' || e.category === 'Trailer')), [db, f, layer])
   const active = jobsOn(db, t).filter(j => inScope(j, f))
   const cranes = db.equipment.filter(e => e.category === 'Crane' && inScope(e, f))
-  const working = cranes.filter(c => active.some(j => j.craneId === c.id)).length
+  const working = cranes.filter(c => active.some(j => jobCranes(j).includes(c.id))).length
   const util = cranes.length ? working / cranes.length : 0
   const atWork = active.reduce((s, j) => s + j.dayRate, 0)
   const ys = useMemo(() => yearSeries(db, f), [db, f])
