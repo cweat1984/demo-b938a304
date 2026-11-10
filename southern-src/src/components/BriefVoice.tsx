@@ -79,3 +79,28 @@ export default function BriefVoiceButton({ speech }: { speech: ReturnType<typeof
     </>
   )
 }
+
+/** Settings copy of the same per-device choice. Remembers in localStorage. Does not use the microphone. */
+export function BriefingVoiceCard() {
+  const speech = useBriefSpeech()
+  const { voices, loaded, pref, resolved, choose, setRate, hasSpeech } = speech
+  const chosen = pref.voiceURI && voices.some(v => v.voiceURI === pref.voiceURI) ? pref.voiceURI : (resolved.voice?.voiceURI ?? '')
+  return (
+    <div className="card p-5 flex flex-col gap-3" data-testid="settings-brief-voice">
+      <div className="font-semibold">Daily briefing voice</div>
+      <p className="text-sm text-muted">Uses a voice already on this device. Enhanced and “Natural” voices are preferred. An online voice may be sent to the browser’s own speech service. This app does not add a paid voice service, and it does not use the microphone.</p>
+      {!hasSpeech && <p data-testid="brief-voice-none">This browser cannot speak. The briefing stays on screen.</p>}
+      {hasSpeech && !loaded && <p data-testid="brief-voice-loading">Looking for voices on this device…</p>}
+      {hasSpeech && loaded && !voices.length && <p data-testid="brief-voice-none">No voice is installed. Add one in the device settings, then come back.</p>}
+      {resolved.missing && <p data-testid="brief-voice-missing">The saved voice isn’t on this device anymore. Another installed voice is used.</p>}
+      {!!voices.length && <div role="radiogroup" aria-label="Briefing voices" className="flex flex-col gap-1 max-h-64 overflow-auto">{voices.map(v => (
+        <label key={v.voiceURI} className="flex items-center gap-3 min-h-[44px] rounded-xl px-2 hover:bg-surface-2">
+          <input type="radio" name="settings-brief-voice" className="size-4" checked={chosen === v.voiceURI} onChange={() => choose(v.voiceURI)} data-testid="settings-voice-option" data-uri={v.voiceURI} />
+          <span className="flex-1 min-w-0"><span className="font-semibold">{v.name}</span><span className="block text-xs text-muted">{v.localService ? 'On this device' : 'Online, via this browser'}{v.natural ? ' · more natural' : ''}</span></span>
+        </label>
+      ))}</div>}
+      <label className="flex items-center gap-3 text-sm"><span className="w-16 text-muted">Speed</span><input data-testid="brief-voice-rate" type="range" min={0.85} max={1.1} step={0.01} value={pref.rate} onChange={e => setRate(Number(e.target.value))} className="flex-1" /><span className="num w-10 text-right">{pref.rate.toFixed(2)}</span></label>
+      <button type="button" className="self-start h-11 px-4 rounded-full bg-surface-2 font-semibold" data-testid="brief-voice-sample" onClick={() => speech.speak(BRIEF_SAMPLE)}>Listen</button>
+    </div>
+  )
+}

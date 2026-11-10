@@ -7,7 +7,8 @@ import { THEMES } from './themes'
 import { create } from 'zustand'
 import type * as T from './types'
 import type { PageKey } from './roles'
-import { roleDef, ROLES, setGuestView } from './roles'
+import { roleDef, ROLES, setGuestView, currentGuestScope } from './roles'
+import { scrubDb } from '../guest/guard'
 import { localRepository } from './repo'
 import { uid, today, addDays, range, hoursBetween, diffDays, csvHooks, dateOf } from '../lib/util'
 import { realHours, elapsedHours, entriesOverlap, isoOffset, localDate, hhmmOf, deviceTz, MAX_SHIFT_H } from './timemath'
@@ -175,6 +176,12 @@ export const useStore = create<State>((set, get) => ({
     })
   },
   signIn(role, method = 'Demo role', asEmployeeId?: string) {
+    // A guest session exists only after a signed pass is verified. The role picker, a code, and a passkey cannot open the staff database as Guest.
+    if (role === 'guest') {
+      let pass = false
+      try { pass = method === 'Guest pass' && !!sessionStorage.getItem('sc-guest') } catch { pass = false }
+      if (!pass) return
+    }
     clearUndo()
     if (role !== 'guest' && guestContext()) { console.warn('Staff sign-in is off on a guest-pass browser'); return }
     const rd = roleDef(role)
@@ -184,6 +191,7 @@ export const useStore = create<State>((set, get) => ({
     // company-wide roles open on All Company; everyone else on their home branch
     const scope = scopeFor(get().db, role, session.employeeId); saveFilter(session, scope)
     set({ session, ui: { ...get().ui, page: rd.home, drawer: null, drawerStack: [], filter: scope } }); window.scrollTo({ top: 0 }); requestAnimationFrame(() => window.scrollTo({ top: 0 }))
+    if (role === 'guest') set({ db: scrubDb(get().db as unknown as Record<string, unknown>, currentGuestScope()) as unknown as T.DB })
     setHash(`/${rd.home}`)
     get().commit('Signed in', asEmployeeId && emp ? `${rd.label} · ${emp.craft}` : rd.label, `${session.name} · ${method}`, () => {}, { silent: true })
   },
@@ -564,10 +572,14 @@ export const actions = {
     if (dup) return { ok: false, reason: 'Duplicate — this exact entry was already submitted.' }
     const overlap = db0.time.find(t => t.employeeId === e.employeeId && Math.abs(diffDays(t.date, e.date)) <= 1 && entriesOverlap(t, e)) // real spans: works for overnight shifts
     const hours = o?.hours ?? realHours(e.date, e.start, e.end, e.mealMin) // DST-correct; end ≤ start = ran past midnight
+    const over = hours > MAX_SHIFT_H // same 16 h line as the field form
+    const flagged = !!(overlap || over || o?.flag)
+    const why = o?.flag ?? (overlap ? 'Overlaps another entry — review' : over ? `Over ${MAX_SHIFT_H} h — verify` : e.note)
     S().commit('Submitted time', emp(db0, e.employeeId), `${e.date} · ${hours}h · ${e.activity}${e.jobId ? ` · Job #${jobNo(db0, e.jobId)}` : ''}`, db => {
-      db.time.push({ ...e, id: uid('te'), hours, status: overlap || hours > 14 || o?.flag ? 'Flagged' : 'Submitted', note: o?.flag ?? (overlap ? 'Overlaps another entry — review' : hours > 14 ? 'Long shift — verify' : e.note), submittedAt: new Date().toISOString() })
+      db.time.push({ ...e, id: uid('te'), hours, status: flagged ? 'Flagged' : 'Submitted', note: why, submittedAt: new Date().toISOString() })
     })
-    return { ok: true }
+    // A shift between 14 h and 16 h is still filed, and the person is told a supervisor will look at it. Over 16 h is flagged.
+    return { ok: true, reason: flagged ? (o?.flag ?? (overlap ? 'Overlaps another entry — review' : `Flagged — over ${MAX_SHIFT_H} hours`)) : hours > 14 ? 'Long shift held for review' : undefined }
   },
   /** Employee/supervisor explains an over/under day. Cost of the extra hours lands on the unit, job or overhead. */
   timeReason(o: { employeeId: string; date: string; reason: string; note?: string; unitId?: string; jobId?: string }) {
@@ -1012,7 +1024,12 @@ export const actions = {
   addCert(c: Omit<T.Cert, 'id'>) { S().commit('Added certification', emp(S().db, c.employeeId), `${c.type} exp ${c.expires}`, db => { db.certs.push({ ...c, id: uid('cert') }) }) },
   verifyCert(id: string, v: T.Cert['verified']) { const c = byId(S().db.certs, id)!; S().commit('Reviewed certification', emp(S().db, c.employeeId), `${c.type}: ${v}`, db => { const x = byId(db.certs, id)!; x.verified = v; if (x.pendingExpires) { if (v === 'Verified') { x.issued = today(); x.expires = x.pendingExpires; if (x.pendingProof) x.proof = x.pendingProof } if (v !== 'Needs Review') { delete x.pendingExpires; delete x.pendingProof; if (v === 'Rejected') x.verified = 'Verified' } } }) }, // dive2: a renewal only takes effect once verified; rejecting it keeps the old card
   renewCert(id: string, expires: string, proof?: string) { const c = byId(S().db.certs, id)!; S().commit('Renewal logged (pending verification)', emp(S().db, c.employeeId), `${c.type} → ${expires}${proof ? ` · proof ${proof}` : ''}`, db => { const x = byId(db.certs, id)!; x.pendingExpires = expires; x.pendingProof = proof; x.verified = 'Needs Review' }) }, // dive2: printed expiry waits for verification; current date stays in force
-  addIncident(i: Omit<T.Incident, 'id' | 'no'>) { S().commit('Reported incident', i.kind, i.description.slice(0, 60), db => { const yr = (i.date || today()).slice(0, 4), n = Math.max(0, ...db.incidents.filter(x => x.no.startsWith(`INC-${yr}-`)).map(x => Number(x.no.split('-')[2]) || 0)) + 1; db.incidents.unshift({ ...i, id: uid('inc'), no: `INC-${yr}-${String(n).padStart(3, '0')}` }); /* dive3 T3b: numbers restart each year */ db.notices.unshift({ id: uid('n'), at: new Date().toISOString(), severity: i.severity === 'High' ? 'Urgent' : 'Action Required', title: `${i.kind} reported`, body: i.description.slice(0, 80), mandatory: true, roles: ['safety', 'owner', 'ops'], read: false }); if (i.kind === 'Recordable' || i.kind === 'Vehicle') db.notices.unshift({ id: uid('n'), at: new Date().toISOString(), severity: 'Urgent', title: `${i.kind} — decide on a DOT post-accident test`, body: 'Alcohol within 8 h, drugs within 32 h (§382.303). Order it on Drug & Alcohol → Tests.', mandatory: true, roles: ['der'], read: false }) }) },
+  addIncident(i: Omit<T.Incident, 'id' | 'no'>) {
+    const involved = [...new Set([i.employeeId].filter((id): id is string => !!id && !!byId(S().db.employees, id)))]
+    S().commit('Reported incident', i.kind, i.description.slice(0, 60), db => { const yr = (i.date || today()).slice(0, 4), n = Math.max(0, ...db.incidents.filter(x => x.no.startsWith(`INC-${yr}-`)).map(x => Number(x.no.split('-')[2]) || 0)) + 1; db.incidents.unshift({ ...i, id: uid('inc'), no: `INC-${yr}-${String(n).padStart(3, '0')}` }); /* dive3 T3b: numbers restart each year */ db.notices.unshift({ id: uid('n'), at: new Date().toISOString(), severity: i.severity === 'High' ? 'Urgent' : 'Action Required', title: `${i.kind} reported`, body: i.description.slice(0, 80), mandatory: true, roles: ['safety', 'owner', 'ops'], read: false }); if (i.kind === 'Recordable' || i.kind === 'Vehicle') db.notices.unshift({ id: uid('n'), at: new Date().toISOString(), severity: 'Urgent', title: `${i.kind} — decide on a DOT post-accident test`, body: 'Alcohol within 8 h, drugs within 32 h (§382.303). Order it on Drug & Alcohol → Tests.', mandatory: true, roles: ['der'], read: false }) })
+    // Anyone named on the report is off the board until the DER clears them. Do not touch setCrane or assign here.
+    for (const id of involved) if (!byId(S().db.employees, id)?.ssHold) actions.ssHold(id, true)
+  },
   updateIncident(id: string, patch: Partial<T.Incident>): boolean { const cur = byId(S().db.incidents, id)!; const nx = { ...cur, ...patch } // dive2: a Recordable can't be closed without a root cause + corrective action
     if (patch.status === 'Closed' && (nx.kind === 'Recordable' ? (!nx.correctiveAction?.trim() || !nx.rootCause?.trim()) : !nx.correctiveAction?.trim())) return false // dive3: every kind needs a corrective action to close
     S().commit('Updated incident', cur.no, Object.keys(patch).join(', '), db => { Object.assign(byId(db.incidents, id)!, patch, patch.status === 'Closed' ? { closedBy: S().session?.name } : {}) }); return true },

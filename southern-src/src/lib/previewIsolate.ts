@@ -112,7 +112,7 @@ if (ON) {
 
   if (navigator.serviceWorker) {
     const sw = navigator.serviceWorker
-    sw.register = (() => Promise.resolve(null)) as typeof sw.register
+    sw.register = (() => Promise.resolve(null)) as unknown as typeof sw.register
     sw.getRegistrations = async () => []
     sw.getRegistration = async () => undefined
   }

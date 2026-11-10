@@ -3,6 +3,8 @@ import { toast } from 'sonner'
 import { Fingerprint, KeyRound, Smartphone, ShieldCheck } from 'lucide-react'
 import { useStore } from '../data/store'
 import { ROLES } from '../data/roles'
+/** Guest is a signed-pass role. It is not offered on a passkey or a two-step code. */
+const STAFF_ROLES = ROLES.filter(r => r.key !== 'guest')
 import type { RoleKey } from '../data/types'
 import { Modal, Button } from '../components/ui'
 import { passkeys, platformAvailable, registerPasskey, signInWithPasskey, deviceLabel, bioName } from './security'
@@ -29,7 +31,7 @@ export function PasskeyButton() {
     const r = ROLES.find(x => x.key === role)!
     setBusy(true)
     try { await registerPasskey(role, r.who); toast.success(`${BIO[0].toUpperCase() + BIO.slice(1)} sign-in is set up on this device`, { description: 'Your passkey never leaves this device.' }); setSetup(false); signIn(role, 'Passkey (this device)') }
-    catch { toast.error('Passkey not created', { description: 'Cancelled or not supported here — use a code instead.' }) }
+    catch (e) { const host = e instanceof Error && /hostname/.test(e.message); toast.error('Passkey not created', { description: host ? e.message : 'Cancelled or not supported here — use a code instead.' }) }
     finally { setBusy(false) }
   }
   return (
@@ -43,7 +45,7 @@ export function PasskeyButton() {
       <Modal open={setup} onClose={() => setSetup(false)} title={`Set up ${BIO} sign-in`} sub={`Creates a passkey on ${deviceLabel()} — nothing to remember, nothing to phish.`}>
         <div className="flex flex-col gap-3" data-testid="passkey-setup">
           <div className="grid place-items-center py-3"><div className="grid size-20 place-items-center rounded-full bg-accent/15 text-accent"><Fingerprint className="size-10" /></div></div>
-          <label className="text-sm font-semibold">Who's signing in?<select className="input mt-1.5" value={role} onChange={e => setRole(e.target.value as RoleKey)} data-testid="passkey-role">{ROLES.map(r => <option key={r.key} value={r.key}>{r.who} · {r.label}</option>)}</select></label>
+          <label className="text-sm font-semibold">Who's signing in?<select className="input mt-1.5" value={role} onChange={e => setRole(e.target.value as RoleKey)} data-testid="passkey-role">{STAFF_ROLES.map(r => <option key={r.key} value={r.key}>{r.who} · {r.label}</option>)}</select></label>
           {avail === false && <div className="text-sm text-warn">This browser has no fingerprint / Face ID / Windows Hello available. Use a code instead.</div>}
           <Button variant="primary" size="lg" disabled={busy || avail === false} onClick={create} data-testid="passkey-create">{busy ? `Waiting for ${BIO}…` : 'Create passkey'}</Button>
           <Button variant="ghost" onClick={() => { setSetup(false); setCode(true) }}>Use a code instead</Button>
@@ -67,7 +69,7 @@ export function TwoFactor({ open, onClose, onOk }: { open: boolean; onClose: () 
   return (
     <Modal open={open} onClose={onClose} title="Two-step verification" sub="Step 2 of 2 · your password was accepted">
       <div className="flex flex-col gap-4" data-testid="twofa">
-        <label className="text-sm font-semibold">Account<select className="input mt-1.5" value={role} onChange={e => setRole(e.target.value as RoleKey)}>{ROLES.map(r => <option key={r.key} value={r.key}>{r.who} · {r.label}</option>)}</select></label>
+        <label className="text-sm font-semibold">Account<select className="input mt-1.5" value={role} onChange={e => setRole(e.target.value as RoleKey)}>{STAFF_ROLES.map(r => <option key={r.key} value={r.key}>{r.who} · {r.label}</option>)}</select></label>
         <div className="flex gap-1.5 p-1 rounded-xl bg-surface-2 text-sm font-semibold">{(['code', 'push'] as const).map(m => <button key={m} onClick={() => setMode(m)} className={cn('flex-1 h-9 rounded-lg', mode === m && 'bg-surface-3')}>{m === 'code' ? 'Authenticator code' : 'Approve on phone'}</button>)}</div>
         {mode === 'code' ? <>
           <div className="flex justify-center gap-2" onPaste={e => { const t = e.clipboardData.getData('text').replace(/\D/g, '').slice(0, 6); if (t.length === 6) { setDigits(t.split('')); e.preventDefault() } }}>

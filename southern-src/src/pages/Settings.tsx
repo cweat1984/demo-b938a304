@@ -19,6 +19,7 @@ import { Logo } from '../shell/Splash'
 import SecurityCenter from '../batch5/SecurityCenter'
 import { startTour } from '../batch6/tour'
 import { usePresent } from '../lib/present'
+import { BriefingVoiceCard } from '../components/BriefVoice'
 
 export default function Settings() {
   const session = useStore(s => s.session)!
@@ -60,6 +61,7 @@ function Look() {
         <div><div className="font-semibold mb-3">Font</div><Segmented value={prefs.font} onChange={v => setPrefs({ font: v })} options={(['Inter', 'Barlow', 'System'] as const).map(v => ({ value: v, label: v }))} /></div>
       </Card>
       <DesignModeCard />
+      <BriefingVoiceCard />
     </div>
   )
 }

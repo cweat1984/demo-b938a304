@@ -3,6 +3,7 @@ import { appName } from '../data/brand'
  *  NOTE: a production build verifies the assertion on the server — the demo only proves the authenticator ceremony. */
 import { create } from 'zustand'
 import type { RoleKey } from '../data/types'
+import { ROLES } from '../data/roles'
 import { useStore } from '../data/store'
 
 export interface Passkey { credId: string; role: RoleKey; name: string; created: string; label: string }
@@ -15,9 +16,32 @@ const savePk = (l: Passkey[]) => localStorage.setItem(PK, JSON.stringify(l))
 export async function platformAvailable() { try { return !!window.PublicKeyCredential && await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable() } catch { return false } }
 export const deviceLabel = () => { const u = navigator.userAgent; return /iPhone/.test(u) ? 'iPhone · Face ID' : /iPad/.test(u) ? 'iPad · Touch ID' : /Android/.test(u) ? 'Android · fingerprint' : /Mac/.test(u) ? 'Mac · Touch ID' : /Windows/.test(u) ? 'Windows Hello' : 'This device' }
 
+/** WebAuthn rejects a numeric host (127.0.0.1). localhost and real domains work. */
+export function passkeyHostOk(host = location.hostname) {
+  return !!host && !/^\d+\.\d+\.\d+\.\d+$/.test(host) && !host.includes(':')
+}
+/** The role is written into the authenticator user handle at registration. A later edit of localStorage cannot change it. */
+function userIdForRole(role: string) {
+  const name = new TextEncoder().encode(role)
+  const id = new Uint8Array(32)
+  id[0] = name.length
+  id.set(name, 1)
+  crypto.getRandomValues(id.subarray(1 + name.length))
+  return id
+}
+function roleFromUserId(buf: ArrayBuffer | null): RoleKey | null {
+  if (!buf) return null
+  const bytes = new Uint8Array(buf)
+  const n = bytes[0]
+  if (!n || 1 + n > bytes.length) return null
+  const role = new TextDecoder().decode(bytes.slice(1, 1 + n))
+  return ROLES.some(r => r.key === role && r.key !== 'guest') ? role as RoleKey : null
+}
 export async function registerPasskey(role: RoleKey, name: string) {
+  if (role === 'guest') throw new Error('Guest uses a signed pass, not a passkey')
+  if (!passkeyHostOk()) throw new Error('Passkeys need a hostname such as localhost, not a numeric address')
   const cred = await navigator.credentials.create({ publicKey: {
-    challenge: rand(32), rp: { name: appName() }, user: { id: rand(16), name: `${name.toLowerCase().replace(/\s+/g, '.')}@southern.example`, displayName: name },
+    challenge: rand(32), rp: { name: appName() }, user: { id: userIdForRole(role), name: `${name.toLowerCase().replace(/\s+/g, '.')}@southern.example`, displayName: name },
     pubKeyCredParams: [{ type: 'public-key', alg: -7 }, { type: 'public-key', alg: -257 }],
     authenticatorSelection: { authenticatorAttachment: 'platform', userVerification: 'required', residentKey: 'preferred' }, timeout: 60000, attestation: 'none',
   } }) as PublicKeyCredential | null
@@ -27,11 +51,15 @@ export async function registerPasskey(role: RoleKey, name: string) {
   return pk
 }
 export async function signInWithPasskey(): Promise<Passkey> {
+  if (!passkeyHostOk()) throw new Error('Passkeys need a hostname such as localhost, not a numeric address')
   const list = passkeys(); if (!list.length) throw new Error('none')
   const a = await navigator.credentials.get({ publicKey: { challenge: rand(32), allowCredentials: list.map(p => ({ type: 'public-key' as const, id: unb64u(p.credId), transports: ['internal' as AuthenticatorTransport] })), userVerification: 'required', timeout: 60000 } }) as PublicKeyCredential | null
   if (!a) throw new Error('cancelled')
   const id = b64u(a.rawId); const pk = list.find(p => p.credId === id); if (!pk) throw new Error('unknown credential')
-  return pk
+  const bound = roleFromUserId((a.response as AuthenticatorAssertionResponse).userHandle)
+  if (!bound) throw new Error('This passkey’s role does not match the one created with it')
+  if (pk.role !== bound) savePk(list.map(p => p.credId === id ? { ...p, role: bound } : p))
+  return { ...pk, role: bound }
 }
 export const removePasskey = (credId: string) => savePk(passkeys().filter(p => p.credId !== credId))
 

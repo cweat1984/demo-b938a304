@@ -1,6 +1,6 @@
 /** Browser speech for the daily briefing. Uses voices already installed on this device.
  *  Does not download voices, open the microphone, or call a speech server of our own.
- *  A voice with localService false may be sent to the browser vendor; those are never the default. */
+ *  A browser "online" voice may be sent to that browser's own speech service. This app does not call a paid service. */
 
 export const BRIEF_VOICE_KEY = 'sc-brief-voice'
 export const BRIEF_SAMPLE = 'Good morning. Here is how the daily briefing will sound.'
@@ -31,7 +31,7 @@ export function describeVoice(v: { name: string; lang: string; localService: boo
     name: v.name,
     lang,
     localService,
-    natural: localService && NATURAL.test(v.name) && /en/i.test(lang || navLang),
+    natural: NATURAL.test(v.name) && /en/i.test(lang || navLang),
   }
 }
 
@@ -51,18 +51,19 @@ export function rank(v: ListedVoice, navLang: string) {
   const want = (navLang || 'en').toLowerCase().slice(0, 2)
   const lang = v.lang.toLowerCase()
   let score = 0
-  if (v.localService) score += 100
   if (lang.startsWith(want)) score += 40
   else if (lang.startsWith('en')) score += 20
-  if (v.natural) score += 30
+  // A local enhanced voice (Siri, Samantha) beats an online "Natural" voice. An online natural voice still beats a plain local one.
+  if (v.natural && v.localService) score += 120
+  else if (v.natural) score += 80
+  else if (v.localService) score += 30
   return score
 }
 
-/** Highest-ranked voice that stays on the device. Null when this browser has no local voice. */
+/** Best installed voice. Local enhanced first, then the browser's own natural/online voice, then a plain local voice. */
 export function pickDefault(voices: ListedVoice[], navLang: string): ListedVoice | null {
-  const locals = voices.filter(v => v.localService)
-  if (!locals.length) return null
-  return [...locals].sort((a, b) => rank(b, navLang) - rank(a, navLang))[0]
+  if (!voices.length) return null
+  return [...voices].sort((a, b) => rank(b, navLang) - rank(a, navLang))[0]
 }
 
 export function resolveVoice(voices: ListedVoice[], pref: VoicePref | null, navLang: string): { voice: ListedVoice | null; missing: boolean } {
@@ -111,11 +112,12 @@ export function speakBriefing(text: string, voice: SpeechSynthesisVoice | null, 
     if (i >= parts.length) { onEnd?.(); return }
     const u = new SpeechSynthesisUtterance(parts[i])
     u.rate = clampRate(rate)
+    u.pitch = 1
     if (voice) { u.voice = voice; if (voice.lang) u.lang = voice.lang }
     u.onend = () => {
       i += 1
       if (mine !== token) return
-      window.setTimeout(step, 160)
+      window.setTimeout(step, 220)
     }
     u.onerror = () => { if (mine === token) onEnd?.() }
     try { window.speechSynthesis.speak(u) } catch { if (mine === token) onEnd?.() }

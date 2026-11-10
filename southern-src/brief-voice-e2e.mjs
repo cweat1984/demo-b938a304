@@ -88,6 +88,38 @@ async function page() {
   await ctx.close()
 }
 
+{
+  const { ctx, p } = await page()
+  await p.goto(base)
+  await p.click('[data-role=owner]')
+  await p.waitForSelector('[data-testid=briefing]')
+  await p.evaluate(() => window.__loadVoices([
+    { name: 'English United States', lang: 'en-US', voiceURI: 'local-plain', localService: true },
+    { name: 'Google US English Natural', lang: 'en-US', voiceURI: 'google-natural', localService: false },
+  ]))
+  await p.evaluate(() => { location.hash = '/settings' })
+  await p.waitForSelector('[data-testid=settings-brief-voice]')
+  const checked = await p.locator('[data-testid=settings-voice-option]:checked').getAttribute('data-uri')
+  ok(checked === 'google-natural', `settings prefers the browser natural voice over a plain local one (${checked})`)
+  await p.locator('[data-testid=settings-voice-option][data-uri=local-plain]').check()
+  await p.click('[data-testid=settings-brief-voice] [data-testid=brief-voice-sample]')
+  await p.waitForTimeout(200)
+  const sample = await p.evaluate(() => window.__speech.spoken.at(-1))
+  ok(sample?.uri === 'local-plain' && sample.rate >= 0.85 && sample.rate <= 1.1, 'settings listen uses the saved voice and a spoken speed')
+  await p.reload()
+  await p.waitForSelector('[data-role=owner], [data-testid=settings-brief-voice], [data-testid=briefing]')
+  await p.evaluate(() => window.__loadVoices([
+    { name: 'English United States', lang: 'en-US', voiceURI: 'local-plain', localService: true },
+    { name: 'Google US English Natural', lang: 'en-US', voiceURI: 'google-natural', localService: false },
+  ]))
+  if (await p.locator('[data-role=owner]').count()) await p.click('[data-role=owner]')
+  if (await p.locator('[data-testid=settings-brief-voice]').count() === 0) await p.evaluate(() => { location.hash = '/settings' })
+  await p.waitForSelector('[data-testid=settings-voice-option]:checked')
+  const again = await p.locator('[data-testid=settings-voice-option]:checked').getAttribute('data-uri')
+  ok(again === 'local-plain', `the settings choice is remembered (${again})`)
+  await ctx.close()
+}
+
 await b.close()
 console.log(fails.length ? `FAILED ${fails.length}\n` + fails.join('\n') : 'ALL PASS')
 process.exit(fails.length ? 1 : 0)

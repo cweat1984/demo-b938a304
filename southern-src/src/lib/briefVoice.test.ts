@@ -20,10 +20,15 @@ test('a missing saved voice falls back and is reported', () => {
   assert.equal(r.voice?.voiceURI, 'samantha')
 })
 
-test('an online voice is not the default even if its name sounds natural', () => {
-  const onlyRemote = listVoices([{ name: 'Neural Online', lang: 'en-US', localService: false, voiceURI: 'net' }], 'en-US')
-  assert.equal(pickDefault(onlyRemote, 'en-US'), null)
-  assert.equal(onlyRemote[0].natural, false)
+test('an online natural voice beats a plain local voice, and a local enhanced voice beats both', () => {
+  const rows = listVoices([
+    { name: 'English United States', lang: 'en-US', localService: true, voiceURI: 'plain' },
+    { name: 'Google US English Natural', lang: 'en-US', localService: false, voiceURI: 'google' },
+    { name: 'Samantha (Enhanced)', lang: 'en-US', localService: true, voiceURI: 'samantha' },
+  ], 'en-US')
+  assert.equal(pickDefault(rows, 'en-US')?.voiceURI, 'samantha')
+  const noLocalEnhanced = rows.filter(v => v.voiceURI !== 'samantha')
+  assert.equal(pickDefault(noLocalEnhanced, 'en-US')?.voiceURI, 'google')
 })
 
 test('sentences keep the pauses between briefing lines', () => {
