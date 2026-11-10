@@ -1263,7 +1263,13 @@ export const actions = {
     })
   },
   setCollections(invId: string, c: T.Invoice['collections']) { S().commit('Collections status', byId(S().db.invoices, invId)!.invNo, c, db => { byId(db.invoices, invId)!.collections = c }) },
-  addCost(c: Omit<T.JobCost, 'id'>) { S().commit('Posted job cost', `Job #${jobNo(S().db, c.jobId)}`, `${c.category} $${c.amount.toLocaleString()}`, db => { db.costs.push({ ...c, id: uid('co') }) }) },
+  addCost(c: Omit<T.JobCost, 'id'>) {
+    const amount = Math.round(Number(c.amount) * 100) / 100
+    if (!Number.isFinite(amount) || amount <= 0) return { ok: false as const, reason: 'Amount must be more than $0.' }
+    if (amount > BILL_MAX) return { ok: false as const, reason: `Amount over $${BILL_MAX.toLocaleString()} — check the number.` }
+    S().commit('Posted job cost', `Job #${jobNo(S().db, c.jobId)}`, `${c.category} $${amount.toLocaleString()}`, db => { db.costs.push({ ...c, amount, id: uid('co') }) })
+    return { ok: true as const }
+  },
 
   // ----- configs -----
   saveConfig(c: T.CraneConfig) { S().commit('Saved crane configuration', byId(S().db.equipment, c.craneId)!.unit, c.name, db => { db.configs = db.configs.filter(x => x.id !== c.id); db.configs.push(c) }) },
