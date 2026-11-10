@@ -401,6 +401,35 @@ await attempt('14. Keyboard: the "+N cranes" control is a button, so Space opens
   await ctx.close()
 })
 
+await attempt('15. Two tabs recording payments both keep their payment.', async () => {
+  const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } })
+  const a = await ctx.newPage()
+  const b = await ctx.newPage()
+  for (const p of [a, b]) {
+    await p.addInitScript(() => localStorage.setItem('sc-tour-seen', '1'))
+    await p.goto(base, { waitUntil: 'domcontentloaded' })
+    await p.waitForSelector('[data-role=owner]')
+    await p.evaluate(() => window.__store.getState().signIn('owner', 'Demo role'))
+    await p.waitForSelector('[data-testid=undo-bar]')
+  }
+  await a.waitForTimeout(300)
+  const inv = await a.evaluate(() => {
+    const i = window.__store.getState().db.invoices.find(x => x.kind !== 'Credit' && x.amount - x.paid > 50)
+    return i ? { id: i.id, invNo: i.invNo } : null
+  })
+  if (!inv) { ok(false, 'seed has an open invoice to pay'); await ctx.close(); return }
+  const stale = await b.evaluate(() => window.__store.getState().db)
+  await a.evaluate(inv => window.__actions.recordPayment(inv.id, 10, 'Check', 'TAB-A', '2026-11-10'), inv)
+  await b.evaluate(({ stale, inv }) => {
+    window.__store.setState({ db: stale })
+    window.__actions.recordPayment(inv.id, 15, 'Check', 'TAB-B', '2026-11-10')
+  }, { stale, inv })
+  await a.waitForTimeout(500)
+  const refs = await a.evaluate(inv => (window.__store.getState().db.invoices.find(x => x.id === inv.id)?.payments ?? []).map(p => p.ref), inv)
+  ok(refs.includes('TAB-A') && refs.includes('TAB-B'), `both payments stay on ${inv.invNo} (${refs.join(',') || 'none'})`)
+  await ctx.close()
+})
+
 await browser.close()
 console.log(fails.length ? `\nFAILED ${fails.length}\n` + fails.map(f => '- ' + f).join('\n') : '\nALL PASS')
 process.exit(fails.length ? 1 : 0)

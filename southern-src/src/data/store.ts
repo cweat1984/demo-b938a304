@@ -102,6 +102,55 @@ const GUEST_WRITE_OK = /^(Signed in|Suggestion|Suggest|Feedback|Design note|Note
 const guestTab = () => useStore.getState().session?.role === 'guest' || guestContext()
 /** Every change is broadcast to other open windows (phone + office stay in sync, live). */
 const live: BroadcastChannel | null = typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel('southern-live') : null
+const payKey = (p: { date: string; amount: number; method: string; ref: string }) => `${p.date}|${p.amount}|${p.method}|${p.ref}`
+/** A tab that saved from an older copy sends the whole database. Keep crew, invoices, and payments this tab already added. */
+function keepLocalAdds(local: T.DB, incoming: T.DB): T.DB {
+  const db: T.DB = { ...incoming }
+  const asgIds = new Set(incoming.assignments.map(a => a.id))
+  const keptAsg = local.assignments.filter(a => !asgIds.has(a.id))
+  if (keptAsg.length) db.assignments = [...incoming.assignments, ...keptAsg.map(a => ({ ...a }))]
+  if (local.invoices && incoming.invoices) {
+    const invoices = incoming.invoices.map(i => ({ ...i, payments: [...(i.payments ?? [])] }))
+    const byId = new Map(invoices.map(i => [i.id, i]))
+    let touched = false
+    for (const li of local.invoices) {
+      const cur = byId.get(li.id)
+      if (!cur) { invoices.push({ ...li, payments: [...(li.payments ?? [])] }); touched = true; continue }
+      const have = new Set(cur.payments.map(payKey))
+      const extra = (li.payments ?? []).filter(p => !have.has(payKey(p)))
+      if (!extra.length) continue
+      cur.payments = [...cur.payments, ...extra.map(p => ({ ...p }))]
+      touched = true
+      if (cur.kind === 'Credit') continue
+      const paid = Math.min(cur.amount, Math.round(cur.payments.reduce((s, p) => s + p.amount, 0) * 100) / 100)
+      cur.paid = paid
+      if (paid >= cur.amount - 0.005) {
+        cur.status = 'Paid'; cur.collections = 'Paid'
+        const j = db.jobs.find(x => x.id === cur.jobId)
+        if (j && j.invoiceNo === cur.invNo && j.stage !== 'Paid') db.jobs = db.jobs.map(x => x.id === j.id ? { ...x, stage: 'Paid' as const } : x)
+      } else if (paid > 0 && cur.status !== 'Overdue') cur.status = 'Partial'
+    }
+    if (touched) db.invoices = invoices
+  }
+  if (local.bills && incoming.bills) {
+    const bills = incoming.bills.map(b => ({ ...b, payments: [...(b.payments ?? [])] }))
+    const byId = new Map(bills.map(b => [b.id, b]))
+    let touched = false
+    for (const lb of local.bills) {
+      const cur = byId.get(lb.id)
+      if (!cur) { bills.push({ ...lb, payments: [...(lb.payments ?? [])] }); touched = true; continue }
+      const ids = new Set((cur.payments ?? []).map(p => p.id))
+      const extra = (lb.payments ?? []).filter(p => p.id && !ids.has(p.id))
+      if (!extra.length) continue
+      cur.payments = [...(cur.payments ?? []), ...extra.map(p => ({ ...p }))]
+      touched = true
+      const tot = cur.lines.reduce((s, l) => s + l.amount, 0)
+      if (cur.payments.reduce((s, p) => s + p.amount, 0) >= tot - 0.005) { cur.status = 'Paid'; cur.paidOn = cur.paidOn ?? extra[extra.length - 1].date }
+    }
+    if (touched) db.bills = bills
+  }
+  return db
+}
 const loadSession = (): Session | null => { if (EMBED_ROLE) return null; try { const s = JSON.parse(sessionStorage.getItem('sc-session') || 'null'); return s && typeof s === 'object' && ROLES.some(r => r.key === s.role) && (s.role === 'guest' || !guestContext()) ? s : null } catch { return null } } // unknown role → sign-in screen, not a white screen
 const pageFromHash = (): PageKey | null => (location.hash.replace(/^#\/?/, '').split('?')[0] as PageKey) || null
 
@@ -160,12 +209,7 @@ export const useStore = create<State>((set, get) => ({
       if (!m?.db || get().session?.role === 'guest') return // a guest tab keeps its scrubbed copy
       let db = m.db
       const local = get().db
-      // a tab that saved from an older copy must not drop crew this tab already added
-      if (local?.assignments && (m.baseRev ?? 0) < (local.savedRev ?? 0)) {
-        const ids = new Set(db.assignments.map(a => a.id))
-        const kept = local.assignments.filter(a => !ids.has(a.id))
-        if (kept.length) db = { ...db, assignments: [...db.assignments, ...kept.map(a => ({ ...a }))] }
-      }
+      if (local?.assignments && (m.baseRev ?? 0) < (local.savedRev ?? 0)) db = keepLocalAdds(local, db)
       set({ db })
       clearUndo()
       clearTimeout(saveTimer); saveTimer = undefined
