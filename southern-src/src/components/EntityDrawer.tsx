@@ -9,7 +9,7 @@ import { ChevronLeft, ChevronRight, Siren, Wrench, CheckCircle2, Lock, CalendarP
 import type * as T from '../data/types'
 import { useStore, actions } from '../data/store'
 import { byId, fullName, eqLabel, certBand, workStatus, serviceStatus, pingAgeMin, craneBookings, jobsOn, customerOf, siteOf, agingBucket, craneLeague, COST_CATS, isLive } from '../data/logic'
-import { today, fmtDate, fmtTs, timeAgo, money, addDays, cn, range, dow } from '../lib/util'
+import { today, fmtDate, fmtTs, timeAgo, money, money2, addDays, cn, range, dow } from '../lib/util'
 import { EmpInfoPanel } from './MyInfo'
 import { CertShareLog } from './CertSend'
 import { Sheet, Badge, Button, CallButton, Kv, Avatar, Segmented, Field, Modal, Empty, confirmChoice } from './ui'
@@ -326,9 +326,9 @@ function InvoiceView({ inv }: { inv: T.Invoice }) {
   return (
     <div className="flex flex-col gap-4">
       <div className="flex gap-2"><Badge tone={inv.status === 'Paid' ? 'ok' : inv.status === 'Overdue' ? 'bad' : 'info'}>{inv.status}</Badge><Badge>{agingBucket(inv)}</Badge><Badge tone="warn">{inv.collections}</Badge></div>
-      <div className="grid grid-cols-2 gap-3"><div className="card-flat p-4"><div className="label">Amount</div><div className="display text-3xl font-semibold num">{money(inv.amount)}</div></div><div className="card-flat p-4"><div className="label">Open</div><div className={cn('display text-3xl font-semibold num', open > 0 && agingBucket(inv) !== 'Current' && 'text-bad')}>{money(open)}</div></div></div>
+      <div className="grid grid-cols-2 gap-3"><div className="card-flat p-4"><div className="label">Amount</div><div className="display text-3xl font-semibold num">{money2(inv.amount)}</div></div><div className="card-flat p-4"><div className="label">Open</div><div className={cn('display text-3xl font-semibold num', open > 0.005 && agingBucket(inv) !== 'Current' && 'text-bad')}>{money2(open)}</div></div></div>
       <div className="card p-4"><Kv k="Job" v={<JobRef id={inv.jobId} long />} /><Kv k="Invoice date" v={fmtDate(inv.date)} /><Kv k="Due" v={fmtDate(inv.due)} /><Kv k="Customer contact" v={<span className="inline-flex items-center gap-2">{cust.contact}<CallButton phone={cust.phone} size="sm" label="Call" /></span>} /></div>
-      <div className="card p-0">{inv.lines.map((l, i) => <div key={i} className="flex px-4 py-3 border-b hairline last:border-0 text-sm"><span className="flex-1">{l.description}</span><span className="num">{l.qty} × {money(l.rate)}</span></div>)}</div>
+      <div className="card p-0">{inv.lines.map((l, i) => <div key={i} className="flex px-4 py-3 border-b hairline last:border-0 text-sm"><span className="flex-1">{l.description}</span><span className="num">{l.qty} × {money2(l.rate)}</span></div>)}</div>
       <div className="flex gap-2"><Button size="sm" data-testid="inv-print" onClick={() => printInvoice(db, inv)}>Print / PDF</Button>{<Button size="sm" variant="ghost" onClick={() => { location.href = `mailto:?subject=${encodeURIComponent(`Invoice ${inv.invNo}`)}&body=${encodeURIComponent(`Invoice ${inv.invNo} for ${money(inv.amount)} is attached. Balance due ${money(inv.amount - inv.paid)} by ${fmtDate(inv.due)}.`)}` }}>Email</Button>}</div>
       {inv.customerPo && <div className="text-sm text-muted">Customer PO {inv.customerPo}</div>}
       <PaymentList pays={inv.payments} canUndo={['accounting', 'owner'].includes(role)} onUndo={i => { actions.undoPayment(inv.id, i); toast('Payment removed', { description: `${inv.invNo} is open again` }) }} />

@@ -5,7 +5,7 @@ import { Receipt, Download } from 'lucide-react'
 import type * as T from '../data/types'
 import { useStore, actions } from '../data/store'
 import { inScope, byId, agingBucket, customerOf } from '../data/logic'
-import { cn, fmtDate, money, downloadCsv, today, diffDays } from '../lib/util'
+import { cn, fmtDate, money, money2, downloadCsv, today, diffDays } from '../lib/util'
 import { PageHeader, Segmented, Badge, Button, Card, Empty, CallButton, confirmChoice } from '../components/ui'
 import { InvoicePreview } from '../components/InvoicePreview'
 import { BillingReviewList } from '../components/JobExtras'
@@ -51,7 +51,7 @@ export default function Receivables() {
         <div className="card p-0 overflow-hidden">{list.map(i => { const c = byId(db.customers, i.customerId)!; const ag = agingBucket(i); const late = diffDays(today(), i.due); return (
           <div key={i.id} className="flex items-center gap-4 px-5 py-3 border-b hairline last:border-0 hover:bg-surface-2 transition">
             <button onClick={() => open({ type: 'invoice', id: i.id })} className="flex-1 min-w-0 text-left"><span className="block font-semibold text-sm">{i.invNo}{i.kind ? ` · ${i.kind === 'Credit' ? 'Credit memo' : 'Supplemental'} to ${i.ofInvNo}` : ''} · {c.name}</span><span className="block text-xs text-muted">Job #{byId(db.jobs, i.jobId)?.jobNo} · issued {fmtDate(i.date)} · due {fmtDate(i.due)}{late > 0 && i.paid < i.amount ? ` · ${late}d late` : ''}</span></button>
-            <span className="w-28 text-right num font-semibold">{money(i.amount - i.paid)}</span>
+            <span className="w-28 text-right num font-semibold">{money2(i.amount - i.paid)}</span>
             <span className="w-20 hidden md:block"><Badge tone={ag === 'Paid' ? 'ok' : ag === 'Current' ? 'neutral' : ag === '1–30' ? 'info' : ag === '31–60' ? 'warn' : 'bad'}>{ag}</Badge></span>
             {tab === 'open' && <select className="input w-44 h-9 py-1 text-sm hidden lg:block" value={i.collections} onChange={e => actions.setCollections(i.id, e.target.value as T.Invoice['collections'])}>{['Current', 'Reminder Sent', 'Call Scheduled', 'Collections'].map(s => <option key={s}>{s}</option>)}</select>}
             {tab === 'open' && <CallButton phone={c.phone} label="Call" size="sm" />}
