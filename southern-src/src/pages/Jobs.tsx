@@ -58,7 +58,7 @@ export default function Jobs() {
             <div key={s} className="w-72 shrink-0">
               <div className="flex items-center justify-between px-1 mb-2"><span className="font-semibold">{s}</span><span className="text-xs text-muted num">{col.length} · {money(col.reduce((t, x) => t + x.j.quote.revenue, 0), true)}</span></div>
               <div className="flex flex-col gap-2 max-h-[70vh] overflow-y-auto scroll-thin">
-                {col.slice(0, 30).map(({ j, c }) => (
+                {col.map(({ j, c }) => (
                   <button key={j.id} onClick={() => open({ type: 'job', id: j.id })} className="card p-4 text-left hover:-translate-y-0.5 transition">
                     <div className="flex items-center justify-between"><span className="text-xs font-bold num text-muted">#{j.jobNo}</span><DivisionChip id={j.divisionId} /></div>
                     <div className="font-semibold mt-1 truncate">{customerOf(db, j).name}</div>
