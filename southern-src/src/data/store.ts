@@ -156,12 +156,20 @@ export const useStore = create<State>((set, get) => ({
     set({ db, ready: true, ui: { ...get().ui, page, filter, denied: s && hp && hp !== page ? hp : null } })
     if (EMBED_ROLE && !get().session) { get().signIn(EMBED_ROLE); if (hp && roleDef(EMBED_ROLE).pages.includes(hp)) get().go(hp) }
     if (live) live.onmessage = (ev: MessageEvent) => {
-      const m = ev.data as { db: T.DB; action: string; entity: string; detail: string; actor: string; quiet?: boolean }
+      const m = ev.data as { db: T.DB; baseRev?: number; action: string; entity: string; detail: string; actor: string; quiet?: boolean }
       if (!m?.db || get().session?.role === 'guest') return // a guest tab keeps its scrubbed copy
-      set({ db: m.db })
+      let db = m.db
+      const local = get().db
+      // a tab that saved from an older copy must not drop crew this tab already added
+      if (local?.assignments && (m.baseRev ?? 0) < (local.savedRev ?? 0)) {
+        const ids = new Set(db.assignments.map(a => a.id))
+        const kept = local.assignments.filter(a => !ids.has(a.id))
+        if (kept.length) db = { ...db, assignments: [...db.assignments, ...kept.map(a => ({ ...a }))] }
+      }
+      set({ db })
       clearUndo()
       clearTimeout(saveTimer); saveTimer = undefined
-      if (m.db.savedRev) remember(m.db)
+      if (db.savedRev) remember(db)
       if (!m.quiet) window.dispatchEvent(new CustomEvent('southern-live', { detail: m }))
     }
     window.addEventListener('online', () => set({ ui: { ...get().ui, online: true } }))
@@ -230,6 +238,7 @@ export const useStore = create<State>((set, get) => ({
   },
   commit(action, entity, detail, recipe, opts) {
     if (guestTab() && !GUEST_WRITE_OK.test(action)) return // view-only guest: no data change, whatever calls it
+    const baseRev = get().db.savedRev ?? 0
     const db = structuredClone(get().db)
     recipe(db)
     const s = get().session
@@ -240,7 +249,7 @@ export const useStore = create<State>((set, get) => ({
     db.savedRev = Date.now()
     set({ db })
     if (guestTab()) return // guest copy is scrubbed + view-only: never broadcast or save it
-    if (live && action !== 'Signed in' && action !== 'Read notification') { try { live.postMessage({ db, action, entity, detail, actor: s?.name ?? 'System', quiet: !!opts?.silent && action !== 'Clocked out' }) } catch { /* ignore */ } }
+    if (live && action !== 'Signed in' && action !== 'Read notification') { try { live.postMessage({ db, baseRev, action, entity, detail, actor: s?.name ?? 'System', quiet: !!opts?.silent && action !== 'Clocked out' }) } catch { /* ignore */ } }
     clearTimeout(saveTimer)
     if (guestTab() || (get().db as unknown as { __guest?: boolean }).__guest) return
     // Durable even if the tab is killed before the debounced IndexedDB write. pagehide also flushes.
@@ -333,6 +342,8 @@ export const actions = {
       const dates = (opts.restOfJob ? range(date, j.endDate) : [date]).filter(d => schedulable(db, empId, d))
       dates.forEach(d => {
         if (opts.fromJobId) db.assignments = db.assignments.filter(a => !(a.employeeId === empId && a.date === d && a.jobId === opts.fromJobId))
+        // a later day already on another job stays there — rest-of-job must not double-book
+        if (db.assignments.some(a => a.employeeId === empId && a.date === d && a.jobId !== jobId)) return
         if (!db.assignments.some(a => a.employeeId === empId && a.date === d && a.jobId === jobId))
           db.assignments.push({ id: uid('asg'), jobId, date: d, employeeId: empId, position, source: opts.source ?? 'Dispatch' })
       })
@@ -375,7 +386,7 @@ export const actions = {
     const cfgT = (cfg?.trailerIds ?? []).filter(t => !handUnits.includes(t)), addT = cfgT.filter(t => !busyT(t)), skipT = cfgT.filter(busyT)
     const trailers = [...handUnits, ...addT]
     const unitName = (id: string) => byId(db0.equipment, id)?.unit ?? id
-    const moved = crewDecisions.filter(d => d.decision === 'move')
+    const moved = crewDecisions.filter(d => d.decision === 'move' && !byId(db0.employees, d.empId)?.ssHold)
     S().commit('Swapped crane', `Job #${j.jobNo}`, `Crane ${byId(db0.equipment, oldId)?.unit ?? '—'} → ${c.unit} · ${moved.length} crew moved with crane (confirmed individually) · units: ${trailers.map(unitName).join(', ') || 'none'}${skipT.length ? ` · not added (busy): ${skipT.map(unitName).join(', ')}` : ''}`, db => {
       const job = byId(db.jobs, jobId)!
       job.craneId = craneId
@@ -388,6 +399,7 @@ export const actions = {
       }
       const days = range(date, job.endDate)
       moved.forEach(d => {
+        if (byId(db.employees, d.empId)?.ssHold) return
         days.forEach(dd => {
           // only the board day was confirmed — on later days, don't pull someone off another job
           const other = db.assignments.find(a => a.employeeId === d.empId && a.date === dd && a.jobId !== jobId)
@@ -402,6 +414,7 @@ export const actions = {
       if (oldId) db.employees.filter(e => e.homeCraneId === oldId && db0.assignments.some(a => a.jobId === jobId && a.employeeId === e.id && a.date >= date) && !db.assignments.some(a => a.jobId === jobId && a.employeeId === e.id && a.date >= date)).forEach(e => crewNote(db, e.id, `Change: you’re off Job #${j.jobNo}`, `Crane ${c.unit} replaced ${byId(db.equipment, oldId)?.unit ?? ''} with its own crew · dispatch will call`, jobId))
       notifyJobCrew(db, jobId, `Job #${j.jobNo}: crane is now ${c.unit}`, `${byId(db.equipment, oldId)?.unit ?? '—'} → ${c.unit} from ${dayLabel(date)}`)
     })
+    clearUndo() // crane, trailers, and crew moved together — a roster redo must not put the old seat back on top
     return { skipped: skipT.map(unitName) }
   },
   setJobStatus(jobId: string, status: T.JobStatus) {
@@ -482,11 +495,22 @@ export const actions = {
     const r = rateFor(x.kind, x.role), ses = S().session
     const e: T.JobExtra = { id: uid('jx'), kind: x.kind, role: x.role, qty, action: x.action ?? 'add', from, fromTime: x.fromTime || undefined, to: x.to || undefined, reason: x.reason?.trim() || undefined, billable: x.billable ?? true, rate: r.rate, cost: r.cost, at: new Date().toISOString(), by: ses?.name ?? 'System' }
     const what = `${extraLabel(e)} from ${from}${e.fromTime ? ` ${e.fromTime}` : ''}${e.to ? ` to ${e.to}` : ''} · ${e.billable ? 'billable' : 'non-billable (absorbed)'}`
+    const beforeCrew = e.action === 'remove' && e.kind === 'person' ? db0.assignments.map(a => ({ ...a })) : undefined
     S().commit(e.action === 'remove' ? 'Removed from job' : 'Added to job', `Job #${j.jobNo}`, `${what}${e.reason ? ` · ${e.reason}` : ''}`, db => {
       const jj = byId(db.jobs, jobId)!; jj.extras = [...(jj.extras ?? []), e]
+      if (e.action === 'remove' && e.kind === 'person') {
+        const end = extraEnd(jj, e)
+        for (const d of range(from, end)) {
+          const hits = db.assignments.filter(a => a.jobId === jobId && a.date === d && a.position === e.role).slice(0, e.qty)
+          if (!hits.length) continue
+          const ids = new Set(hits.map(a => a.id))
+          db.assignments = db.assignments.filter(a => !ids.has(a.id))
+        }
+      }
       billingReviewAdd(db, jj, what, e.reason, from, extraEnd(jj, e))
       db.notices.unshift({ id: uid('n'), at: new Date().toISOString(), severity: 'Info', title: `Job #${j.jobNo}: ${extraLabel(e)}`, body: `${what}. Tickets ${e.billable ? (e.action === 'remove' ? 'credit' : 'charge') + ' the customer' : 'unchanged — absorbed cost'}.`, mandatory: false, roles: ['dispatch', 'ops', 'accounting', 'branch'], ref: { type: 'job', id: jobId }, read: false })
     })
+    if (beforeCrew) noteRosterChange(`Remove ${e.role}`, beforeCrew)
     return { ok: true as const, id: e.id }
   },
   updateExtra(jobId: string, id: string, patch: Partial<Pick<T.JobExtra, 'qty' | 'from' | 'fromTime' | 'to' | 'reason' | 'billable'>>) {
@@ -541,13 +565,18 @@ export const actions = {
         if (jj.unitDays) jj.unitDays = Object.fromEntries(Object.entries(jj.unitDays).map(([k, v]) => [k, { from: addDaysIso(v.from, delta), to: addDaysIso(v.to, delta) }]))
       }
       const now = today()
-      if (r.shiftCrew && delta) db.assignments = db.assignments.map(a => a.jobId === jobId && a.date >= now ? { ...a, date: addDaysIso(a.date, delta) } : a)
+      if (r.shiftCrew && delta) db.assignments = db.assignments.map(a => {
+        if (a.jobId !== jobId || a.date < now) return a
+        const nd = addDaysIso(a.date, delta)
+        const clash = db.assignments.some(x => x.id !== a.id && x.employeeId === a.employeeId && x.date === nd && x.jobId !== jobId)
+        return clash ? a : { ...a, date: nd }
+      })
       // dive3 M2: anyone dropped because their days fall outside the new dates hears about it
       const dropped = db.assignments.filter(a => a.jobId === jobId && a.date >= now && (a.date < r.start || a.date > r.end))
       db.assignments = db.assignments.filter(a => a.jobId !== jobId || a.date < now || (a.date >= r.start && a.date <= r.end))
       ;[...new Set(dropped.map(a => a.employeeId))].forEach(id => { const ds = dropped.filter(a => a.employeeId === id).map(a => a.date).sort(); crewNote(db, id, `Change: you’re off Job #${j.jobNo}`, `${ds.length} day${ds.length > 1 ? 's' : ''} from ${dayLabel(ds[0])} — the job moved to ${dayLabel(r.start)} → ${dayLabel(r.end)}. Dispatch will call.`, jobId) })
       const body = `${dayLabel(r.start)} → ${dayLabel(r.end)}${r.time ? ` · start ${r.time}` : ''}${r.reason ? ` · ${r.reason}` : ''}`
-      if (r.shiftCrew && delta && jj.extras?.length) jj.extras = jj.extras.map(x => ({ ...x, from: addDaysIso(x.from, delta), to: x.to ? addDaysIso(x.to, delta) : x.to }))
+      if (delta && (r.shiftCrew || r.shiftUnits !== false) && jj.extras?.length) jj.extras = jj.extras.map(x => ({ ...x, from: addDaysIso(x.from, delta), to: x.to ? addDaysIso(x.to, delta) : x.to }))
       notifyJobCrew(db, jobId, `Job #${j.jobNo} rescheduled`, body)
       // Req H: supervisor and PM always hear about it, even if not on the crew list yet
       const told = new Set(db.assignments.filter(a => a.jobId === jobId && a.date >= now).map(a => a.employeeId))
