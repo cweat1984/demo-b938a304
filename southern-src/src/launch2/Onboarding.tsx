@@ -31,7 +31,7 @@ export function syncHires() {
     // HR record without a tracker row → add one
     for (const c of db.hires) if (!linked(c.id)) {
       const steps: Record<string, boolean> = {}; Object.entries(c.steps).forEach(([k, v]) => { if (v && CORE_TO_L2[k]) steps[CORE_TO_L2[k]] = true })
-      L().addHire({ first: c.first, last: c.last, personalEmail: '', phone: c.phone, division: db.divisions.find(d => d.id === (c.divisionId ?? 'div-slh'))?.name ?? 'SLH Cranes', branch: db.branches.find(b => b.id === (c.branchId ?? 'br-okc'))?.city ?? 'Oklahoma City', position: c.craft, start: c.start, supervisor: fullName(db.employees.find(e => e.id === c.supervisorId)) || '—', temp: false, coreId: c.id, rate: c.rate, steps, hired: true })
+      L().addHire({ first: c.first, last: c.last, personalEmail: '', phone: c.phone, division: db.divisions.find(d => d.id === (c.divisionId ?? 'div-slh'))?.name ?? 'SLH Cranes', branch: (c.branchId && db.branches.find(b => b.id === c.branchId)?.city) || '—', position: c.craft, start: c.start, supervisor: fullName(db.employees.find(e => e.id === c.supervisorId)) || '—', temp: false, coreId: c.id, rate: c.rate, steps, hired: true })
     }
     // tracker hire marked hired but no HR record → create it (employee #, work email) with branch/division/rate
     for (const h of L().hires) if (h.hired && !h.activated && (!h.coreId || !useStore.getState().db.hires.some(c => c.id === h.coreId))) {
@@ -45,26 +45,29 @@ export function syncHires() {
 export default function Onboarding({ embedded }: { embedded?: boolean } = {}) {
   const all = useL2(s => s.hires), { patchHire, addHire } = useL2.getState()
   const ready = useStore(s => s.ready), coreHires = useStore(s => s.db?.hires), role = useStore(s => s.session?.role)
+  const branchId = useStore(s => s.ui.filter.branchId)
+  const branchCity = useStore(s => s.db.branches.find(b => b.id === branchId)?.city)
   useEffect(() => { if (ready) syncHires() }, [ready, coreHires, all])
-  const hires = all.filter(h => !h.activated)
+  const canHire = role === 'hr' || role === 'owner' || role === 'payroll'
+  const hires = all.filter(h => !h.activated && (branchId === 'all' || !branchCity || h.branch === branchCity))
   const [adding, setAdding] = useState(false)
   const [mail, setMail] = useState<NewHire | null>(null)
   const [f, setF] = useState({ first: '', last: '', personalEmail: '', phone: '', division: 'SLH Cranes', branch: 'Oklahoma City', position: 'Rigger', start: addDays(today(), 7), supervisor: 'Wade Parker', temp: false, rate: '30' })
   return <div className="flex flex-col gap-5" data-testid="onboarding">
-    {embedded ? <div className="flex justify-between items-center"><div className="text-sm text-muted">One list for every new hire — activate when they're field-ready.</div><Button variant="primary" icon={<UserPlus className="size-4" />} onClick={() => setAdding(true)} data-testid="hire-new">New hire</Button></div> : <PageHeader eyebrow="People" title="New hire onboarding" sub="Mark someone hired, send the welcome, and watch them get field-ready." actions={<Button variant="primary" icon={<UserPlus className="size-4" />} onClick={() => setAdding(true)} data-testid="hire-new">New hire</Button>} />}
+    {embedded ? <div className="flex justify-between items-center"><div className="text-sm text-muted">One list for every new hire — activate when they're field-ready.</div>{canHire && <Button variant="primary" icon={<UserPlus className="size-4" />} onClick={() => setAdding(true)} data-testid="hire-new">New hire</Button>}</div> : <PageHeader eyebrow="People" title="New hire onboarding" sub="Mark someone hired, send the welcome, and watch them get field-ready." actions={canHire ? <Button variant="primary" icon={<UserPlus className="size-4" />} onClick={() => setAdding(true)} data-testid="hire-new">New hire</Button> : undefined} />}
     <div className="grid grid-cols-3 md:grid-cols-6 gap-2">{HIRE_STAGES.map(st => <Card key={st} className="!p-3"><div className="text-[11px] text-muted">{st}</div><div className="text-2xl font-semibold">{hires.filter(h => h.hired && stageOf(h) === st).length}</div></Card>)}</div>
     <div className="flex flex-col gap-3">{hires.map(h => { const st = stageOf(h), gr = gearReady(h)
       return <Card key={h.id} className="flex flex-col md:flex-row md:items-center gap-4" >
         <div className="flex-1 min-w-0" data-testid="hire-row"><div className="font-semibold">{h.first} {h.last} <span className="text-muted font-normal text-sm">· {h.position} · {h.division} · {h.branch}</span></div>
           <div className="flex items-center gap-1 mt-2">{HIRE_STAGES.map((s, i) => <div key={s} title={s} className={cn('h-1.5 flex-1 rounded-full', i <= HIRE_STAGES.indexOf(st) && h.hired ? 'bg-accent' : 'bg-surface-3')} />)}</div>
-          <div className="text-xs text-muted mt-1.5">{h.hired ? `${st} · ${pctOf(h)}% · starts ${h.start}` : 'Candidate — not marked hired'} · {coreHires?.find(c => c.id === h.coreId)?.email ?? workEmail(h)}{coreHires?.find(c => c.id === h.coreId) && <span data-testid="hire-empno"> · {coreHires.find(c => c.id === h.coreId)!.empNo}</span>}{h.rate ? ` · $${h.rate}/hr` : ''}</div></div>
+          <div className="text-xs text-muted mt-1.5">{h.hired ? `${st} · ${pctOf(h)}% · starts ${h.start}` : 'Candidate — not marked hired'} · {coreHires?.find(c => c.id === h.coreId)?.email ?? workEmail(h)}{coreHires?.find(c => c.id === h.coreId) && <span data-testid="hire-empno"> · {coreHires.find(c => c.id === h.coreId)!.empNo}</span>}{canHire && h.rate ? ` · $${h.rate}/hr` : ''}</div></div>
         <div className="flex items-center gap-3 flex-wrap">
           <Badge tone={gr ? 'ok' : 'warn'}><Shirt className="size-3" />{gr ? 'Gear ready' : 'Gear sizes needed'}</Badge>
           <Toggle checked={h.hired} onChange={v => { patchHire(h.id, { hired: v }); if (v) toast.success(`${h.first} marked hired`, { description: `Employee ID created · ${workEmail(h)}` }) }} label="Hired" />
           <div className="flex rounded-lg bg-surface-2 p-0.5 text-xs" data-testid="temp-toggle">{(['Temp', 'Long-term'] as const).map(x => <button key={x} onClick={() => { patchHire(h.id, { temp: x === 'Temp' }); toast(x === 'Temp' ? 'Temp: required PPE only' : 'Long-term: full uniform, swag credits and benefits unlocked — store notified') }} className={cn('px-2.5 h-7 rounded-md', (x === 'Temp') === h.temp && 'bg-surface font-semibold shadow')}>{x}</button>)}</div>
           <Button size="sm" icon={<Mail className="size-3.5" />} onClick={() => setMail(h)} data-testid="welcome-preview">Welcome email</Button>
           <a href={welcomeLink(h)} target="_blank" className="h-8 px-3 rounded-lg text-[13px] bg-surface-2 inline-flex items-center gap-1.5" data-testid="open-welcome"><ExternalLink className="size-3.5" />Open as hire</a>
-          {h.hired && h.coreId && role !== 'field' && <Button size="sm" variant={st === 'Field-ready' ? 'primary' : 'secondary'} data-testid="hire-activate" onClick={async () => {
+          {canHire && h.hired && h.coreId && <Button size="sm" variant={st === 'Field-ready' ? 'primary' : 'secondary'} data-testid="hire-activate" onClick={async () => {
             if (st !== 'Field-ready') { const r = await confirmChoice(`Activate ${h.first} before onboarding is done?`, `${h.first} is at ${st} (${pctOf(h)}%). Activating puts them on the roster and the dispatch board now — Dispatch still checks certs.`, [{ label: 'Activate now', value: true, tone: 'primary' }]); if (!r) return }
             // dive2: DOT gate — a CDL/driver hire needs a negative pre-employment drug test + full Clearinghouse query on file (§382.301, §382.701)
             let noDrive: string | undefined
