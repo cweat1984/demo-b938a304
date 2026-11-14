@@ -640,6 +640,14 @@ export const actions = {
 
   // ----- time -----
   submitTime(e: Omit<T.TimeEntry, 'id' | 'hours' | 'status' | 'submittedAt'>, o?: { hours?: number; flag?: string }): { ok: boolean; reason?: string } {
+    const wall = (t: string) => { const [hh, mm] = (t || '0:0').split(':').map(Number); return (hh || 0) * 60 + (mm || 0) }
+    // A shift that runs past midnight is two calendar days: the hours before midnight stay on the start date.
+    if (e.start && e.end && wall(e.end) > 0 && wall(e.end) < wall(e.start)) {
+      const flag = o?.flag ? { flag: o.flag } : undefined
+      const head = actions.submitTime({ ...e, end: '00:00', mealMin: 0 }, flag)
+      const tail = actions.submitTime({ ...e, date: addDays(e.date, 1), start: '00:00' }, flag)
+      return { ok: !!(head.ok && tail.ok), reason: head.reason ?? tail.reason }
+    }
     const db0 = S().db
     const dup = db0.time.find(t => t.employeeId === e.employeeId && t.date === e.date && t.jobId === e.jobId && t.activity === e.activity && t.start === e.start)
     if (dup) return { ok: false, reason: 'Duplicate — this exact entry was already submitted.' }
@@ -1136,13 +1144,14 @@ export const actions = {
     return { hire, warn: dupe ? 'An employee or hire with this name already exists — confirm this is a different person.' : dupePhone ? 'Phone number matches an existing employee.' : undefined }
   },
   hireStep(id: string, step: string, v: boolean) { S().commit('Onboarding step', byId(S().db.hires, id)!.first, `${step}: ${v ? 'done' : 'open'}`, db => { byId(db.hires, id)!.steps[step] = v }) },
-  activateHire(id: string, opt?: { noDrive?: string }): string | undefined {
+  activateHire(id: string, opt?: { noDrive?: string; certs?: { type: string }[] }): string | undefined {
     const h = byId(S().db.hires, id)
-    if (!h) return
+    if (!h || !h.steps?.training) return
     const newId = uid('emp')
     S().commit('Activated employee', `${h.first} ${h.last}`, `${h.empNo} moved to active roster${opt?.noDrive ? ' · non-driving until DOT cleared' : ''}`, db => {
       db.hires = db.hires.filter(x => x.id !== id)
       db.employees.push({ ...(opt?.noDrive ? { noDrive: opt.noDrive } : {}), id: newId, empNo: h.empNo, first: h.first, last: h.last, craft: h.craft, phone: h.phone, email: h.email, supervisorId: h.supervisorId, status: 'Active', perDiemBlocked: [], hireDate: h.start, city: byId(db.branches, h.branchId ?? 'br-okc')?.city ?? 'Oklahoma City', rate: h.rate ?? 28, divisionId: h.divisionId ?? 'div-slh', branchId: h.branchId ?? 'br-okc' })
+      for (const c of opt?.certs ?? []) db.certs.push({ id: uid('cert'), employeeId: newId, type: c.type as T.CertType, credentialNo: 'TRAIN', provider: 'Orientation', issued: today(), expires: addDays(today(), 365), verified: 'Verified' })
     })
     return newId
   },

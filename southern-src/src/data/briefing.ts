@@ -24,6 +24,11 @@ export function siteWeather(site: { id: string; lat: number }, date = today()) {
 }
 const TALKS = ['Tag lines: never wrap around your hand', 'Pinch points during outrigger setup', 'Overhead power lines — 20 ft minimum clearance', 'Wind limits: check the load chart, not your gut', 'Heat stress: water, rest, shade', 'Three points of contact on crane and truck', 'Rigging inspection before every lift', 'Swing radius barricades and spotters', 'Hand signals — one designated signal person', 'Fatigue and the drive home']
 export const talkOfDay = (d = today()) => TALKS[hash(d) % TALKS.length]
+/** The line the briefing reads: a toolbox talk or JSA that was actually posted today, then the canned fallback. */
+export function postedTalk(db: T.DB, d = today()) {
+  const posted = db.talks.filter(t => t.date === d)
+  return posted.find(t => t.kind === 'Toolbox Talk')?.title ?? posted.find(t => t.kind === 'JSA')?.title ?? talkOfDay(d)
+}
 
 export function buildBriefing(db: T.DB, role: T.RoleKey, me: T.Employee | undefined, f: OrgFilter): Briefing {
   const t = today(), tm = addDays(t, 1)
@@ -77,7 +82,7 @@ export function buildBriefing(db: T.DB, role: T.RoleKey, me: T.Employee | undefi
         sec('Crew', 'Users', crew.map(e => ({ label: fullName(e), sub: `${e.craft} · ${e.phone}`, to: { href: `tel:${e.phone}` } }))),
         sec('Tickets to get signed', 'FileSignature', tickets.map(x => ({ label: `${fmtDate(x.date)} · ${x.status}`, sub: x.correction ?? x.work, tone: x.status === 'Needs Correction' ? 'bad' : 'warn', to: job ? { fieldJob: job.id, date: x.date } : undefined }))),
         sec('Safety', 'ShieldCheck', [
-          { label: `Toolbox talk: ${talkOfDay()}`, sub: 'Sign today’s JSA in More › JSA & toolbox' },
+          { label: `Toolbox talk: ${postedTalk(db)}`, sub: 'Sign today’s JSA in More › JSA & toolbox' },
           ...(site?.hospital ? [{ label: `Nearest hospital: ${site.hospital}`, tone: 'info' } as BriefItem] : []),
           ...(job?.notes ? [{ label: job.notes, tone: 'warn' } as BriefItem] : []),
           ...certs.map(x => ({ label: `${x.type} ${certBand(x).band === 'expired' ? 'expired' : `expires ${fmtDate(x.expires)}`}`, tone: certBand(x).band === 'expired' ? 'bad' : 'warn', sub: 'Tell Safety / HR' } as BriefItem)),
@@ -162,9 +167,9 @@ export function buildBriefing(db: T.DB, role: T.RoleKey, me: T.Employee | undefi
     const gaps = chems.filter(i => !byId(db.sds, i.sdsId) || sdsExpired(byId(db.sds, i.sdsId)))
     const rig = db.items.filter(i => i.oos || (i.inspectionDue && i.inspectionDue <= addDays(t, 14))).sort((a, b) => (a.oos ? '0' : a.inspectionDue!).localeCompare(b.oos ? '0' : b.inspectionDue!))
     return {
-      title: 'Safety', text: `${greet()}${name}. ${plural(inc.length, 'open incident')}. ${plural(certs.length, 'cert')} expired or expiring within 30 days. ${plural(insp.length, 'inspection')} due in the next two weeks. ${gaps.length ? `${plural(gaps.length, 'chemical')} with a missing or out-of-date SDS. ` : ''}${plural(rig.length, 'rigging item')} due or tagged out. Today's toolbox talk: ${talkOfDay()}.`,
+      title: 'Safety', text: `${greet()}${name}. ${plural(inc.length, 'open incident')}. ${plural(certs.length, 'cert')} expired or expiring within 30 days. ${plural(insp.length, 'inspection')} due in the next two weeks. ${gaps.length ? `${plural(gaps.length, 'chemical')} with a missing or out-of-date SDS. ` : ''}${plural(rig.length, 'rigging item')} due or tagged out. Today's toolbox talk: ${postedTalk(db)}.`,
       sections: [
-        sec('Toolbox talk of the day', 'Megaphone', [{ label: talkOfDay(), sub: 'Push to every crew’s JSA', tone: 'info', to: { page: 'safety', hash: 'talks' } }]),
+        sec('Toolbox talk of the day', 'Megaphone', [{ label: postedTalk(db), sub: 'Push to every crew’s JSA', tone: 'info', to: { page: 'safety', hash: 'talks' } }]),
         sec('Open incidents', 'AlertTriangle', inc.map(i => ({ label: `${i.no} · ${i.kind}`, sub: `${i.status} · ${fmtDate(i.date)} · ${i.description}`, tone: i.severity === 'High' ? 'bad' : 'warn', to: i.jobId ? { ref: { type: 'job', id: i.jobId } } : i.employeeId ? { ref: { type: 'employee', id: i.employeeId } } : { page: 'safety' } }))),
         sec('Certs expiring', 'Award', certs.slice(0, 10).map(x => ({ label: `${fullName(byId(db.employees, x.employeeId))} · ${x.type}`, sub: certBand(x).band === 'expired' ? `Expired ${fmtDate(x.expires)}` : `Expires ${fmtDate(x.expires)}`, tone: certBand(x).band === 'expired' ? 'bad' : 'warn', to: { ref: { type: 'cert', id: x.id } } }))),
         sec('Inspections due', 'ClipboardCheck', insp.slice(0, 8).map(i => ({ label: `${i.kind}${i.unitId ? ` · ${byId(db.equipment, i.unitId)?.unit}` : i.itemId ? ` · ${byId(db.items, i.itemId)?.name}` : ''}`, sub: `Due ${fmtDate(i.due)}`, tone: i.due < t ? 'bad' : 'warn', to: i.unitId ? { ref: { type: 'equipment', id: i.unitId } } : i.itemId ? { ref: { type: 'item', id: i.itemId } } : { page: 'safety' } }))),
