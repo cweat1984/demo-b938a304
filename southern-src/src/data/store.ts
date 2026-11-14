@@ -641,8 +641,8 @@ export const actions = {
   // ----- time -----
   submitTime(e: Omit<T.TimeEntry, 'id' | 'hours' | 'status' | 'submittedAt'>, o?: { hours?: number; flag?: string }): { ok: boolean; reason?: string } {
     const wall = (t: string) => { const [hh, mm] = (t || '0:0').split(':').map(Number); return (hh || 0) * 60 + (mm || 0) }
-    // A shift that runs past midnight is two calendar days: the hours before midnight stay on the start date.
-    if (e.start && e.end && wall(e.end) > 0 && wall(e.end) < wall(e.start)) {
+    // A typed shift that runs past midnight is two calendar days. A clock-out already passes the real elapsed hours and stays on the start day, including a DST night.
+    if (o?.hours == null && e.start && e.end && wall(e.end) > 0 && wall(e.end) < wall(e.start)) {
       const flag = o?.flag ? { flag: o.flag } : undefined
       const head = actions.submitTime({ ...e, end: '00:00', mealMin: 0 }, flag)
       const tail = actions.submitTime({ ...e, date: addDays(e.date, 1), start: '00:00' }, flag)
