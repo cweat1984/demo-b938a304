@@ -1144,10 +1144,10 @@ export const actions = {
     return { hire, warn: dupe ? 'An employee or hire with this name already exists — confirm this is a different person.' : dupePhone ? 'Phone number matches an existing employee.' : undefined }
   },
   hireStep(id: string, step: string, v: boolean) { S().commit('Onboarding step', byId(S().db.hires, id)!.first, `${step}: ${v ? 'done' : 'open'}`, db => { byId(db.hires, id)!.steps[step] = v }) },
-  activateHire(id: string, opt?: { noDrive?: string; certs?: { type: string }[] }): string | undefined {
+  activateHire(id: string, opt?: { noDrive?: string; certs?: { type: string }[]; force?: boolean }): string | undefined {
     const h = byId(S().db.hires, id)
-    // Orientation still open blocks a normal activation. A recorded non-driving override is the exception: they join the roster, but they cannot drive.
-    if (!h || (!h.steps?.training && !opt?.noDrive)) return
+    // Orientation still open blocks a silent activation. A recorded non-driving reason, or an explicit "Activate now", is allowed.
+    if (!h || (!h.steps?.training && !opt?.noDrive && !opt?.force)) return
     const newId = uid('emp')
     S().commit('Activated employee', `${h.first} ${h.last}`, `${h.empNo} moved to active roster${opt?.noDrive ? ' · non-driving until DOT cleared' : ''}`, db => {
       db.hires = db.hires.filter(x => x.id !== id)

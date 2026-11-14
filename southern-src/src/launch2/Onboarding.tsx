@@ -77,7 +77,7 @@ export default function Onboarding({ embedded }: { embedded?: boolean } = {}) {
                 const why = (window.prompt(`Reason for activating ${h.first} without DOT clearance (logged):`) ?? '').trim(); if (why.length < 5) { toast.error('Not activated — a reason is required'); return }
                 audit('DOT clearance override', `${h.first} ${h.last}`, `${missing} missing · ${why.slice(0, 120)}`); noDrive = why.slice(0, 120) } }
             const certs = Object.entries(h.trainings ?? {}).filter(([, v]) => v === 'verified').map(([type]) => ({ type }))
-            const newId = actions.activateHire(h.coreId!, { ...(noDrive ? { noDrive } : {}), certs }); if (!newId) { toast.error('Not activated', { description: 'Orientation & OSHA is still open.' }); return } useDa.getState().relink(h.id, newId); if (h.coreId) useDa.getState().relink(h.coreId, newId); patchHire(h.id, { activated: true }); toast.success(`${h.first} is on the roster`, { description: noDrive ? 'Non-driving until DOT cleared — the DER logs the test + Clearinghouse query' : 'Now available to Dispatch' })
+            const newId = actions.activateHire(h.coreId!, { ...(noDrive ? { noDrive } : {}), certs, force: st !== 'Field-ready' }); if (!newId) { toast.error('Not activated', { description: 'Orientation & OSHA is still open.' }); return } useDa.getState().relink(h.id, newId); if (h.coreId) useDa.getState().relink(h.coreId, newId); patchHire(h.id, { activated: true }); toast.success(`${h.first} is on the roster`, { description: noDrive ? 'Non-driving until DOT cleared — the DER logs the test + Clearinghouse query' : 'Now available to Dispatch' })
           }}>Activate</Button>}
         </div>
       </Card> })}</div>
