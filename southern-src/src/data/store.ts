@@ -1146,7 +1146,8 @@ export const actions = {
   hireStep(id: string, step: string, v: boolean) { S().commit('Onboarding step', byId(S().db.hires, id)!.first, `${step}: ${v ? 'done' : 'open'}`, db => { byId(db.hires, id)!.steps[step] = v }) },
   activateHire(id: string, opt?: { noDrive?: string; certs?: { type: string }[] }): string | undefined {
     const h = byId(S().db.hires, id)
-    if (!h || !h.steps?.training) return
+    // Orientation still open blocks a normal activation. A recorded non-driving override is the exception: they join the roster, but they cannot drive.
+    if (!h || (!h.steps?.training && !opt?.noDrive)) return
     const newId = uid('emp')
     S().commit('Activated employee', `${h.first} ${h.last}`, `${h.empNo} moved to active roster${opt?.noDrive ? ' · non-driving until DOT cleared' : ''}`, db => {
       db.hires = db.hires.filter(x => x.id !== id)
