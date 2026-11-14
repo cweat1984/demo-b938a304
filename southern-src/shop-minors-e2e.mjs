@@ -52,12 +52,16 @@ const wk = await webkit.launch()
   await p.waitForSelector('[data-role=owner]')
   await p.evaluate(() => window.__store.getState().signIn('owner', 'Demo role'))
   await p.waitForTimeout(600)
-  const measure = async (page) => p.evaluate(pg => { window.__store.getState().go(pg); return pg }, page).then(() => p.waitForTimeout(500)).then(() => p.evaluate(() => {
+  const measure = async (page) => {
+    await p.evaluate(pg => window.__store.getState().go(pg), page)
+    await p.waitForFunction(pg => window.__store.getState().ui.page === pg && !document.querySelector('[data-testid=command-summary]'), page)
+    return p.evaluate(() => {
     const main = document.querySelector('main')
     const els = [...main.querySelectorAll('button, a, [role=tab]')].filter(el => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 && r.top < innerHeight && r.bottom > 0 })
     const smallEls = els.filter(el => { const r = el.getBoundingClientRect(); return r.height < 43 || r.width < 43 })
     return { n: els.length, small: smallEls.length, sample: smallEls.slice(0, 8).map(el => `${el.tagName}.${(el.className || '').toString().slice(0, 80)} ${(el.getAttribute('aria-label') || el.textContent || '').trim().slice(0, 24)} ${Math.round(el.getBoundingClientRect().width)}x${Math.round(el.getBoundingClientRect().height)}`) }
-  }))
+    })
+  }
   const eq = await measure('equipment')
   const st = await measure('settings')
   const pm = await measure('maint')
