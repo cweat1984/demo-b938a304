@@ -32,7 +32,8 @@ export default function People() {
   const canSeeRec = (r: T.HrRecord) => hr || (r.kind === 'Review' ? !!myId && byId(db.employees, r.employeeId)?.supervisorId === myId : !r.confidential)
   const people = useMemo(() => db.employees.filter(e => inScope(e, f) && (craft === 'All' || e.craft === craft) && (!vets || e.veteran) && (!q || `${e.first} ${e.last} ${e.empNo} ${e.craft} ${e.city}`.toLowerCase().includes(q.toLowerCase()))).sort((a, b) => a.last.localeCompare(b.last)), [db, f, craft, vets, q])
   const crafts = ['All', ...Array.from(new Set(db.employees.map(e => e.craft))).sort()]
-  const pending = db.pto.filter(p => p.status === 'Pending')
+  const onBranch = (empId?: string) => inScope(byId(db.employees, empId), f)
+  const pending = db.pto.filter(p => p.status === 'Pending' && onBranch(p.employeeId))
   const vetCount = db.employees.filter(e => inScope(e, f) && e.veteran).length
   return (
     <div className="max-w-[1400px] mx-auto">
@@ -62,14 +63,14 @@ export default function People() {
           </div>) })}{!people.length && <Empty title="Nobody matches" />}</div>
       </>}
       {tab === 'onboarding' && <Onboarding embedded />}
-      {tab === 'pto' && <div className="card p-0 overflow-hidden">{[...pending, ...db.pto.filter(p => p.status !== 'Pending').slice(0, 20)].map(p => { const e = byId(db.employees, p.employeeId)!; const clash = db.assignments.filter(a => a.employeeId === e.id && a.date >= p.from && a.date <= p.to).length; return (
+      {tab === 'pto' && <div className="card p-0 overflow-hidden">{[...pending, ...db.pto.filter(p => p.status !== 'Pending' && onBranch(p.employeeId)).slice(0, 20)].map(p => { const e = byId(db.employees, p.employeeId)!; const clash = db.assignments.filter(a => a.employeeId === e.id && a.date >= p.from && a.date <= p.to).length; return (
         <div key={p.id} className="flex items-center gap-4 px-5 py-3 border-b hairline last:border-0">
           <Avatar name={fullName(e)} size={32} />
           <span className="flex-1 min-w-0"><span className="block font-semibold text-sm">{fullName(e)} · {p.kind}</span><span className="block text-xs text-muted">{fmtDate(p.from)} – {fmtDate(p.to)} · {p.hours}h{p.note ? ` · ${p.note}` : ''}</span></span>
           {clash > 0 && p.status === 'Pending' && <Badge tone="warn">On {clash} scheduled day{clash > 1 ? 's' : ''}</Badge>}
           {p.status === 'Pending' && hr ? <><Button size="sm" variant="ok" icon={<Check className="size-4" />} onClick={() => { actions.decidePto(p.id, 'Approved'); toast.success('Approved — Dispatch board updated') }}>Approve</Button><Button size="sm" variant="ghost" icon={<X className="size-4" />} onClick={() => actions.decidePto(p.id, 'Denied')}>Deny</Button></> : <Badge tone={p.status === 'Approved' ? 'ok' : p.status === 'Denied' ? 'bad' : 'info'}>{p.status}</Badge>}
         </div>) })}</div>}
-      {tab === 'records' && <div className="card p-0 overflow-hidden" data-testid="hr-records">{db.hrRecords.filter(canSeeRec).map(r => (
+      {tab === 'records' && <div className="card p-0 overflow-hidden" data-testid="hr-records">{db.hrRecords.filter(r => canSeeRec(r) && onBranch(r.employeeId)).map(r => (
         <div key={r.id} className="flex items-center gap-4 px-5 py-3 border-b hairline last:border-0">
           <Badge tone={r.kind === 'Write-Up' ? 'bad' : r.kind === 'Commendation' ? 'ok' : r.kind === 'Review' ? 'info' : 'neutral'}>{r.kind}</Badge>
           <span className="flex-1 min-w-0"><span className="block font-semibold text-sm truncate">{fullName(byId(db.employees, r.employeeId))} · {r.title}</span><span className="block text-xs text-muted truncate">{r.detail}</span></span>

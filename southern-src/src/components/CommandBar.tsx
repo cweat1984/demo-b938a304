@@ -8,7 +8,7 @@ import { Sparkles, ArrowRight, User, Truck, Briefcase, Package, Plus, Siren, Cor
 import { useStore } from '../data/store'
 import { roleDef, PAGES } from '../data/roles'
 import { ask, askSuggestions } from '../data/ask'
-import { eqLabel, fullName, customerOf, siteOf } from '../data/logic'
+import { eqLabel, fullName, customerOf, siteOf, inScope } from '../data/logic'
 import { ICONS } from './icons'
 import { cn } from '../lib/util'
 import { matchTasks, runTask } from '../gapA/tasks'
@@ -112,13 +112,13 @@ export default function CommandBar() {
                     {q.length > 0 && (
                       <>
                         <Command.Group heading={<span className="label px-2">Equipment</span>}>
-                          {db.equipment.map(e => <Command.Item key={e.id} value={`${e.unit} ${e.code} ${e.make} ${e.model} ${e.type}`} className={item} onSelect={() => { close(); openRef({ type: 'equipment', id: e.id }) }}><Truck className="size-4 text-muted" /><span className="font-medium">{eqLabel(e)}</span><span className="text-muted truncate">{e.make} {e.model} · {e.status}</span></Command.Item>)}
+                          {db.equipment.filter(e => inScope(e, f)).map(e => <Command.Item key={e.id} value={`${e.unit} ${e.code} ${e.make} ${e.model} ${e.type}`} className={item} onSelect={() => { close(); openRef({ type: 'equipment', id: e.id }) }}><Truck className="size-4 text-muted" /><span className="font-medium">{eqLabel(e)}</span><span className="text-muted truncate">{e.make} {e.model} · {e.status}</span></Command.Item>)}
                         </Command.Group>
                         <Command.Group heading={<span className="label px-2">People</span>}>
-                          {db.employees.map(e => <Command.Item key={e.id} value={`${e.first} ${e.last} ${e.craft} ${e.empNo}`} className={item} onSelect={() => { close(); openRef({ type: 'employee', id: e.id }) }}><User className="size-4 text-muted" /><span className="font-medium">{fullName(e)}</span><span className="text-muted">{e.craft} · {e.empNo}</span></Command.Item>)}
+                          {db.employees.filter(e => inScope(e, f)).map(e => <Command.Item key={e.id} value={`${e.first} ${e.last} ${e.craft} ${e.empNo}`} className={item} onSelect={() => { close(); openRef({ type: 'employee', id: e.id }) }}><User className="size-4 text-muted" /><span className="font-medium">{fullName(e)}</span><span className="text-muted">{e.craft} · {e.empNo}</span></Command.Item>)}
                         </Command.Group>
                         <Command.Group heading={<span className="label px-2">Jobs</span>}>
-                          {db.jobs.map(j => <Command.Item key={j.id} value={`${j.jobNo} ${customerOf(db, j).name} ${j.name} ${siteOf(db, j).city}`} className={item} onSelect={() => { close(); openRef({ type: 'job', id: j.id }) }}><Briefcase className="size-4 text-muted" /><span className="font-medium">#{j.jobNo}</span><span className="text-muted truncate">{customerOf(db, j).name} · {siteOf(db, j).city}</span></Command.Item>)}
+                          {db.jobs.filter(j => inScope(j, f)).map(j => <Command.Item key={j.id} value={`${j.jobNo} ${customerOf(db, j).name} ${j.name} ${siteOf(db, j).city}`} className={item} onSelect={() => { close(); openRef({ type: 'job', id: j.id }) }}><Briefcase className="size-4 text-muted" /><span className="font-medium">#{j.jobNo}</span><span className="text-muted truncate">{customerOf(db, j).name} · {siteOf(db, j).city}</span></Command.Item>)}
                         </Command.Group>
                         <Command.Group heading={<span className="label px-2">Inventory</span>}>
                           {db.items.map(i => <Command.Item key={i.id} value={`${i.sku} ${i.name} ${i.category}`} className={item} onSelect={() => { close(); openRef({ type: 'item', id: i.id }) }}><Package className="size-4 text-muted" /><span className="font-medium truncate">{i.name}</span><span className="text-muted">{i.onHand} on hand</span></Command.Item>)}

@@ -62,7 +62,7 @@ export function contrastReport(b: Branding) {
 }
 
 /** Milestone 2: the owner's own saved color presets (this browser). */
-export interface SavedPreset { id: string; name: string; primary: string; accent: string; secondary?: string; /** dive3 acct m12: the customer it's for */ company?: { name: string; shortName: string; appName: string; logo?: string } }
+export interface SavedPreset { id: string; name: string; primary: string; accent: string; secondary?: string; /** dive3 acct m12: the customer it's for */ company?: { name: string; shortName: string; appName: string; logo?: string; phone?: string } }
 export const useBrandPresets = create<{ list: SavedPreset[]; add: (p: Omit<SavedPreset, 'id'>) => void; remove: (id: string) => void }>()(persist(set => ({
   list: [],
   add: p => set(s => { audit('Branding preset saved', 'Company branding', `${p.name}: ${p.primary} / ${p.accent}${p.secondary ? ` / ${p.secondary}` : ''}`); return { list: [...s.list.filter(x => x.name !== p.name), { ...p, id: 'bp-' + Date.now().toString(36) }].slice(-12) } }),

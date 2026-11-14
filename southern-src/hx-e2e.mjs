@@ -27,6 +27,8 @@ const liveJob = p => p.evaluate(() => { const db = window.__store.getState().db;
   const r = exp.find(x => x.role === 'Rigger'), m = exp.find(x => x.role === 'Manlift')
   ok(Math.abs(tot.bill - r.rate * r.days) < 2 && Math.abs(tot.abs - m.cost * 2 * m.days) < 2, `totals: billable ${tot.bill} = rigger days × rate, absorbed ${tot.abs} = manlift 2 × days × cost`)
   ok(Math.abs(tot.mar - (r.rate * r.days - r.cost * r.days - m.cost * 2 * m.days)) < 3, `margin impact ${tot.mar} = billable − all extra cost`)
+  // Extras bill only on days a customer has signed. Sign the extra's first day so the draft can show it.
+  await p.evaluate(id => { const st = window.__store.getState(); const job = st.db.jobs.find(x => x.id === id); const day = job.extras?.[0]?.from; if (!day || st.db.tickets.some(t => t.jobId === id && t.date === day && (t.signedAt || t.signerName))) return; window.__store.setState({ db: { ...st.db, tickets: [...st.db.tickets, { id: 'tk-hx-' + day, jobId: id, date: day, signerName: 'Test customer', signedAt: new Date().toISOString(), status: 'Signed', hours: {}, crewIds: [] }] } }) }, j.id)
   // customer lines (invoice draft = what prints for the customer) exclude non-billable
   const lines = await p.evaluate(id => window.__actions.invoiceDraft(id).map(l => l.description), j.id)
   ok(lines.some(l => /Rigger/.test(l)) && !lines.some(l => /Manlift/.test(l)), 'customer invoice lines include the billable rigger, never the absorbed manlift')

@@ -22,7 +22,11 @@ const r = await p.evaluate(pickNo => { const S = window.__store.getState, A = wi
   A.setJobUnits(j.id, [...new Set([...trailers, ...semis])])
   const john = db.employees.find(e => e.first === 'John' && e.last === 'Smith')
   const crew = [john, ...db.employees.filter(e => e.id !== john.id && e.status !== 'Terminated' && e.craft && e.craft !== 'Office')].slice(0, 30)
-  crew.forEach(e => { if (!S().db.assignments.some(a => a.jobId === j.id && a.date === now && a.employeeId === e.id)) A.assign(j.id, now, e.id, 'Rigger') })
+  crew.forEach(e => {
+    // A person already on another job today is not double-booked. Take them off that job first so this board can show the full crew.
+    S().db.assignments.filter(a => a.employeeId === e.id && a.date === now && a.jobId !== j.id).forEach(a => A.unassign(a.jobId, now, e.id))
+    if (!S().db.assignments.some(a => a.jobId === j.id && a.date === now && a.employeeId === e.id)) A.assign(j.id, now, e.id, 'Rigger')
+  })
   const all = [j.craneId, ...cranes]; const ad = (d, n) => { const x = new Date(d + 'T12:00'); x.setDate(x.getDate() + n); return x.toISOString().slice(0, 10) }
   all.forEach((cid, i) => A.setRigPlan(j.id, { craneId: cid, hookReady: ad(j.startDate, i), travelDays: 1, upMode: 'days', upDays: 1 + i, downStart: j.endDate, downAmount: 2 + i, downUnit: i % 2 ? 'd' : 'h' }))
   const jj = S().db.jobs.find(x => x.id === j.id)

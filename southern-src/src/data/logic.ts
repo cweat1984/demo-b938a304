@@ -1,6 +1,6 @@
 // Pure business logic over the DB. No React here — a real backend could run the same rules.
 import type * as T from './types'
-import { today, between, diffDays, addDays, range } from '../lib/util'
+import { today, between, diffDays, addDays, range, startOfWeek } from '../lib/util'
 import { extrasSummary, extraLabel } from './extras'
 import { jobCranes, phaseOn, sharedOn } from './rig'
 import { BURDEN, PER_DIEM_RATES, TRAILER_DAY_COST, distMiles, requiredPositions } from './seed'
@@ -159,9 +159,38 @@ export type CostLine = { category: T.CostCategory; description: string; amount: 
 const ONE_TIME_CATS: T.CostCategory[] = ['Engineering / Lift Plan', 'Permits & Escorts', 'Materials', 'Subcontractors', 'Other']
 export const isOneTime = (l: CostLine) => ONE_TIME_CATS.includes(l.category) || /\b(mob|demob|mobiliz|haul-in|assist crane|pad rebuild|standby)\b/i.test(l.description)
 
-export function entryCost(e: T.Employee | undefined, te: T.TimeEntry) {
+/** Overtime hours by time-entry id. Same rule as the Time screen and the Paychex file: over 40 hours in the week, in date order, not after 10 hours in a day. The company may still have a daily OT rule; this file follows the screen until that is confirmed. */
+function weeklyOtHours(db: T.DB) {
+  const split = new Map<string, number>()
+  const byEmp = new Map<string, T.TimeEntry[]>()
+  for (const t of db.time) {
+    const list = byEmp.get(t.employeeId)
+    if (list) list.push(t)
+    else byEmp.set(t.employeeId, [t])
+  }
+  for (const list of byEmp.values()) {
+    const weeks = new Map<string, T.TimeEntry[]>()
+    for (const t of list) {
+      const wk = startOfWeek(t.date)
+      const arr = weeks.get(wk)
+      if (arr) arr.push(t)
+      else weeks.set(wk, [t])
+    }
+    for (const arr of weeks.values()) {
+      let h0 = 0
+      for (const t of [...arr].sort((a, b) => (a.date + (a.start || '')).localeCompare(b.date + (b.start || '')))) {
+        const reg = Math.max(0, Math.min(t.hours, 40 - h0))
+        split.set(t.id, Math.round((t.hours - reg) * 100) / 100)
+        h0 += t.hours
+      }
+    }
+  }
+  return split
+}
+export function entryCost(e: T.Employee | undefined, te: T.TimeEntry, otHours = 0) {
   const rate = e?.rate ?? 30
-  const reg = Math.min(te.hours, 10), ot = Math.max(0, te.hours - 10)
+  const ot = Math.max(0, Math.min(otHours, te.hours))
+  const reg = Math.max(0, te.hours - ot)
   return { labor: (reg + ot * 1.5) * rate * BURDEN, perDiem: te.perDiems.reduce((s, p) => s + PER_DIEM_RATES[p], 0) }
 }
 
@@ -172,10 +201,11 @@ export function jobCosting(db: T.DB, job: T.Job, ref = today()) {
   const lastDay = job.endDate < ref ? job.endDate : addDays(ref, -1) >= job.startDate ? ref : job.startDate
   const earnedDays = !started ? 0 : diffDays(lastDay < job.endDate ? lastDay : job.endDate, job.startDate) + 1
   const pct = Math.min(1, earnedDays / totalDays)
-  // labor & per diem from time entries (enter once: time → payroll → job cost)
+  // labor & per diem from time entries (enter once: time → payroll → job cost). OT matches payroll: over 40h in the week.
+  const otOf = weeklyOtHours(db)
   db.time.filter(t => t.jobId === job.id).forEach(t => {
     const e = byId(db.employees, t.employeeId)
-    const c = entryCost(e, t)
+    const c = entryCost(e, t, otOf.get(t.id) ?? 0)
     lines.push({ category: 'Labor', description: `${fullName(e)} · ${t.activity} · ${t.hours}h`, amount: c.labor, source: 'Time Entry', date: t.date, refId: t.id })
     if (c.perDiem) lines.push({ category: 'Per Diem', description: `${fullName(e)} · ${t.perDiems.join(' + ')}`, amount: c.perDiem, source: 'Per Diem', date: t.date, refId: t.id })
   })
@@ -293,7 +323,7 @@ export function groupProfit<K extends string>(rows: T.HistJob[], key: (h: T.Hist
 
 // ---------- AR ----------
 export function agingBucket(inv: T.Invoice, ref = today()) {
-  if (inv.paid >= inv.amount) return 'Paid'
+  if (Math.abs(inv.amount - inv.paid) <= 0.005) return 'Paid'
   const late = diffDays(ref, inv.due)
   if (late <= 0) return 'Current'
   if (late <= 30) return '1–30'

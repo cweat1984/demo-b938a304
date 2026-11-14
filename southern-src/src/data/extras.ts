@@ -1,7 +1,7 @@
 /** Requirement H: extra people / support equipment on a job (or ones taken off), charged or credited per day,
  *  billable to the customer or absorbed (non-billable — job costing / P&L only). Pure helpers, no store import. */
 import type * as T from './types'
-import { diffDays, dateOf } from '../lib/util'
+import { diffDays, dateOf, addDays } from '../lib/util'
 
 export const PEOPLE: { role: string; rate: number; cost: number }[] = [
   { role: 'Operator', rate: 1450, cost: 880 }, { role: 'Rigger', rate: 1150, cost: 690 }, { role: 'Oiler', rate: 1050, cost: 620 },
@@ -19,16 +19,20 @@ export const EXTRA_EDITORS: T.RoleKey[] = ['owner', 'ops', 'dispatch', 'branch']
 /** Roles who see dollars on extras (finance). */
 export const EXTRA_MONEY: T.RoleKey[] = ['owner', 'ops', 'accounting']
 
-/** Last day an extra counts: its own end, else the job end — and for equipment, the day it was picked up (call-off). */
+/** Last day an extra counts: its own end, else the job end. Picked-up equipment ends the day before pickup, so that day is off the ticket and off the invoice. */
 export function extraEnd(job: T.Job, x: T.JobExtra) {
   let end = x.to && x.to < job.endDate ? x.to : job.endDate
-  if (x.calloff?.status === 'Picked up') { const d = dateOf(x.calloff.at); if (d < end) end = d }
+  if (x.calloff?.status === 'Picked up') { const d = addDays(dateOf(x.calloff.at), -1); if (d < end) end = d }
   return end
 }
-export function extraDays(job: T.Job, x: T.JobExtra, upTo?: string) {
+export function extraDays(job: T.Job, x: T.JobExtra, upTo?: string, onDates?: ReadonlySet<string>) {
   const from = x.from > job.startDate ? x.from : job.startDate
   let to = extraEnd(job, x); if (upTo && upTo < to) to = upTo
-  return to < from ? 0 : diffDays(to, from) + 1
+  if (to < from) return 0
+  if (!onDates) return diffDays(to, from) + 1
+  let n = 0
+  for (let d = from; d <= to; d = addDays(d, 1)) if (onDates.has(d)) n++
+  return n
 }
 const sign = (x: T.JobExtra) => x.action === 'remove' ? -1 : 1
 /** Money for one extra over `days`: charge (+) or credit (−) to the customer if billable, cost always. */
@@ -36,15 +40,15 @@ export function extraMoney(x: T.JobExtra, days: number) {
   const s = sign(x), cost = s * x.cost * x.qty * days, bill = x.billable ? s * x.rate * x.qty * days : 0
   return { cost, bill, absorbed: x.billable ? 0 : cost, marginImpact: bill - cost }
 }
-export function extrasSummary(job: T.Job, upTo?: string) {
+export function extrasSummary(job: T.Job, upTo?: string, onDates?: ReadonlySet<string>) {
   const xs = job.extras ?? []
-  const rows = xs.map(x => { const d = extraDays(job, x, upTo); return { x, days: d, ...extraMoney(x, d) } })
+  const rows = xs.map(x => { const d = extraDays(job, x, upTo, onDates); return { x, days: d, ...extraMoney(x, d) } })
   const sum = (k: 'cost' | 'bill' | 'absorbed' | 'marginImpact') => rows.reduce((a, r) => a + r[k], 0)
   return { rows, cost: sum('cost'), billable: sum('bill'), absorbed: sum('absorbed'), marginImpact: sum('marginImpact') }
 }
 export const extraLabel = (x: T.JobExtra) => `${x.action === 'remove' ? '−' : '+'}${x.qty} ${x.role}${x.qty > 1 && x.kind === 'person' ? 's' : ''}`
 /** Customer-facing lines (tickets, invoices, proposals) — billable only, never absorbed cost. */
-export function customerExtraLines(job: T.Job, upTo?: string) {
-  return extrasSummary(job, upTo).rows.filter(r => r.x.billable && r.days > 0).map(r => ({ description: `${r.x.action === 'remove' ? 'Credit — removed' : 'Added'} ${r.x.qty} × ${r.x.role} · ${r.days} day${r.days > 1 ? 's' : ''} from ${r.x.from}`, qty: r.days * r.x.qty, rate: (r.x.action === 'remove' ? -1 : 1) * r.x.rate }))
+export function customerExtraLines(job: T.Job, upTo?: string, onDates?: ReadonlySet<string>) {
+  return extrasSummary(job, upTo, onDates).rows.filter(r => r.x.billable && r.days > 0).map(r => ({ description: `${r.x.action === 'remove' ? 'Credit — removed' : 'Added'} ${r.x.qty} × ${r.x.role} · ${r.days} day${r.days > 1 ? 's' : ''} from ${r.x.from}`, qty: r.days * r.x.qty, rate: (r.x.action === 'remove' ? -1 : 1) * r.x.rate }))
 }
 export const isOnTicketDates = (db: T.DB, jobId: string, from: string, to: string) => db.tickets.some(t => t.jobId === jobId && (t.signedAt || t.signerName) && t.date >= from && t.date <= to)

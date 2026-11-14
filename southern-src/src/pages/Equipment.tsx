@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useKeep } from '../lib/keep'
 import { Search, Map as MapIcon, LayoutGrid, Radio, Wrench } from 'lucide-react'
 import type * as T from '../data/types'
@@ -25,6 +25,7 @@ export default function Equipment() {
   const [status, setStatus] = useKeep<'all' | T.EquipStatus>('equipment:status', 'all')
   const [q, setQ] = useKeep('equipment:q', '')
   const all = db.equipment.filter(e => inScope(e, f))
+  useEffect(() => { if (cat !== 'all' && all.length > 0 && !all.some(e => e.category === cat)) setCat('all') }, [f.divisionId, f.branchId, cat, all.length])
   // Keep Equipment in sync with the Crane Moves board: a crane on an active move shows where it's headed.
   const mv = useMoves()
   const moving = new Map(mv.moves.filter(m => m.status === 'In progress').map(m => [mv.cranes.find(c => c.id === m.craneId)?.unit, m]))
@@ -35,7 +36,7 @@ export default function Equipment() {
     <div className="max-w-[1500px] mx-auto">
       <PageHeader eyebrow={<span className="inline-flex items-center gap-2"><Radio className="size-3.5 text-ok" />Samsara telematics <DemoTag /></span>} title="Equipment" sub={`${all.length} units · ${all.filter(e => e.status === 'Out of Service' || e.status === 'Maintenance').length} in the shop`} actions={<Segmented value={view} onChange={setView} options={[{ value: 'grid', label: <LayoutGrid className="size-4" /> }, { value: 'map', label: <MapIcon className="size-4" /> }]} />} />
       <div className="flex flex-wrap gap-3 items-center mb-5">
-        <button data-testid="equip-outside-toggle" onClick={() => setOutside(!outside)} className={cn('h-10 pointer-coarse:h-[44px] px-3.5 rounded-full text-sm font-semibold inline-flex items-center gap-2 border-2 border-dashed border-[#7c3aed]/40', outside ? 'bg-[#7c3aed] text-white' : '')}>Outside cranes · {db.jobs.reduce((n, j) => n + (j.outside ?? []).filter(o => o.to >= today() && o.status !== 'Done').length, 0)}</button>
+        <button data-testid="equip-outside-toggle" onClick={() => setOutside(!outside)} className={cn('h-10 pointer-coarse:h-[44px] px-3.5 rounded-full text-sm font-semibold inline-flex items-center gap-2 border-2 border-dashed border-[#7c3aed]/40', outside ? 'bg-[#7c3aed] text-white' : '')}>Outside cranes · {db.jobs.filter(j => inScope(j, f)).reduce((n, j) => n + (j.outside ?? []).filter(o => o.to >= today() && o.status !== 'Done').length, 0)}</button>
         <Segmented value={cat} onChange={setCat} options={CATS.map(c => ({ value: c.v, label: c.l, count: c.v === 'all' ? all.length : all.filter(e => e.category === c.v).length }))} />
         <div className="relative w-full sm:w-64 sm:ml-auto"><Search className="size-4 absolute left-3 top-1/2 -translate-y-1/2 text-faint" /><input className="input pl-9" placeholder="Unit, make, model" value={q} onChange={e => setQ(e.target.value)} /></div>
       </div>

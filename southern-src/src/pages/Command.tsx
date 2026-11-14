@@ -1,11 +1,12 @@
 import { drillRef } from '../data/drill'
 import { useCompany } from '../data/brand'
 import FixCrew, { type FixTarget } from '../components/FixCrew'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { motion } from 'motion/react'
 import { ArrowUpRight, ArrowDownRight, AlertTriangle, Siren, ChevronRight, Radio, Play, Sparkles, MonitorSmartphone } from 'lucide-react'
 import { useStore } from '../data/store'
 import { jobsOn, inScope, jobCosting, yearSeries, isLive, MONTHS, groupProfit, trailing12, customerOf, costJobs, jobConflicts } from '../data/logic'
+import { jobCranes } from '../data/rig'
 import { today, money, fmtLong, cn } from '../lib/util'
 import { Card, Segmented, Badge, Button, useIsMobile } from '../components/ui'
 import FleetMap from '../components/FleetMap'
@@ -18,6 +19,8 @@ import { ObservanceBanner } from '../components/Flag'
 import { canSeeMoney } from '../data/roles'
 import { GuestRolesCard } from '../guest/GuestSwitch'
 import { guestContext } from '../guest/pass'
+import BriefVoiceButton, { useBriefSpeech } from '../components/BriefVoice'
+import { stopBriefingSpeech } from '../lib/briefVoice'
 
 export default function Command() {
   const company = useCompany()
@@ -36,7 +39,7 @@ export default function Command() {
   const units = useMemo(() => db.equipment.filter(e => inScope(e, f) && (layer === 'all' ? e.category !== 'Trailer' || e.status === 'In Transit' : layer === 'cranes' ? e.category === 'Crane' : e.category === 'Semi' || e.category === 'Pickup' || e.category === 'Trailer')), [db, f, layer])
   const active = jobsOn(db, t).filter(j => inScope(j, f))
   const cranes = db.equipment.filter(e => e.category === 'Crane' && inScope(e, f))
-  const working = cranes.filter(c => active.some(j => j.craneId === c.id)).length
+  const working = cranes.filter(c => active.some(j => jobCranes(j).includes(c.id))).length
   const util = cranes.length ? working / cranes.length : 0
   const atWork = active.reduce((s, j) => s + j.dayRate, 0)
   const ys = useMemo(() => yearSeries(db, f), [db, f])
@@ -56,15 +59,20 @@ export default function Command() {
   const [brief, setBrief] = useState(0)
   const [typed, setTyped] = useState('')
   const [fly, setFly] = useState<{ c: [number, number]; z: number } | undefined>(undefined)
+  const briefIv = useRef<number | undefined>(undefined)
+  const speech = useBriefSpeech()
+  useEffect(() => () => { window.clearInterval(briefIv.current); stopBriefingSpeech() }, [])
   const playBriefing = () => {
     setBrief(b => b + 1); setTyped('')
     const okc = db.branches.find(b => b.hq) ?? db.branches[0]
     setFly({ c: [okc.lat, okc.lng], z: 9 })
     setTimeout(() => setFly({ c: [34.2, -98.6], z: 6 }), 2600)
     let i = 0
-    const iv = setInterval(() => { i += 2; setTyped(briefingText.slice(0, i)); if (i >= briefingText.length) clearInterval(iv) }, 28)
-    try { if ('speechSynthesis' in window) { const u = new SpeechSynthesisUtterance(briefingText); u.rate = 1.02; window.speechSynthesis.cancel(); window.speechSynthesis.speak(u) } } catch { /* no voice on this device */ }
+    window.clearInterval(briefIv.current)
+    briefIv.current = window.setInterval(() => { i += 2; setTyped(briefingText.slice(0, i)); if (i >= briefingText.length) window.clearInterval(briefIv.current) }, 28)
+    speech.speak(briefingText)
   }
+  const closeBriefing = () => { setBrief(0); window.clearInterval(briefIv.current); speech.stop() }
   const rows = useMemo(() => trailing12(db, f), [db, f])
   const comparisons = useMemo(() => {
     if (cmp === 'division') return groupProfit(rows, h => h.divisionId).map(r => ({ ...r, label: db.divisions.find(d => d.id === r.key)?.name ?? r.key, color: db.divisions.find(d => d.id === r.key)?.color }))
@@ -86,7 +94,7 @@ export default function Command() {
           <h1 className="display text-4xl md:text-5xl font-semibold tracking-tight">{session.role === 'guest' ? `Welcome, ${session.name}` : <>{greet}{session.role === 'owner' ? '' : `, ${session.name.split(' ')[0]}`}</>}.</h1>
           <div className="mt-2 text-muted text-base md:text-lg" data-testid="command-summary">{(showMoney ? summary : summary.slice(0, 2)).map((x, i) => <span key={i}>{i ? ' · ' : ''}<button type="button" data-testid={`summary-${i}`} onClick={() => i === 0 ? open(drillRef('jobs:today')) : i === 1 ? useStore.getState().go('dispatch') : open(drillRef('jobs:behind'))} className={cn('text-left underline decoration-dotted decoration-1 underline-offset-4 decoration-current/30 hover:decoration-current', i === 1 && crewConflicts ? 'text-bad font-semibold' : i === 2 && behind.length ? 'text-warn font-semibold' : '')}>{x}</button></span>)}</div>
         </div>
-        {session.role === 'owner' && <Button variant="secondary" icon={<Play className="size-4" />} onClick={playBriefing} data-testid="briefing">Morning briefing</Button>}
+        {session.role === 'owner' && <span className="inline-flex items-center gap-1"><Button variant="secondary" icon={<Play className="size-4" />} onClick={playBriefing} data-testid="briefing">Morning briefing</Button><BriefVoiceButton speech={speech} /></span>}
         {!guestContext() && <a href={`${location.pathname}?sync=1`} target="_blank" rel="noreferrer" className="hidden md:inline-flex items-center gap-2 h-10 px-4 rounded-full border hairline text-sm font-semibold hover:bg-surface-2" data-testid="demo-mode"><MonitorSmartphone className="size-4" />Phone + office demo</a>}
       </div>
       {session.role === 'guest' && <GuestRolesCard />}
@@ -95,8 +103,8 @@ export default function Command() {
       {brief > 0 && (
         <motion.div initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} className="card p-5 flex items-start gap-4 accent-glow border-accent/40" data-testid="briefing-card">
           <span className="grid size-10 shrink-0 place-items-center rounded-full bg-accent text-accent-ink"><Sparkles className="size-5" /></span>
-          <div className="flex-1 min-w-0"><div className="label mb-1">Ask {company.assistantName} · briefing</div><div className="text-lg leading-snug">{typed}<span className="blink">▍</span></div></div>
-          <button className="text-muted hover:text-ink text-sm" onClick={() => { setBrief(0); try { window.speechSynthesis?.cancel() } catch { /* */ } }}>Close</button>
+          <div className="flex-1 min-w-0"><div className="label mb-1">Ask {company.assistantName} · briefing</div><div className="text-lg leading-snug" data-testid="command-briefing-text">{typed}<span className="blink">▍</span></div>{speech.loaded && speech.hasSpeech && !speech.resolved.voice && <p className="text-xs text-muted mt-1" data-testid="brief-spoken-fallback">Spoken voice isn’t available on this browser. The words stay on screen.</p>}</div>
+          <button className="text-muted hover:text-ink text-sm min-h-[44px] px-2" onClick={closeBriefing} data-testid="briefing-close">Close</button>
         </motion.div>
       )}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">

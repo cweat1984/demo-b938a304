@@ -7,7 +7,8 @@ import { THEMES } from './themes'
 import { create } from 'zustand'
 import type * as T from './types'
 import type { PageKey } from './roles'
-import { roleDef, ROLES, setGuestView } from './roles'
+import { roleDef, ROLES, setGuestView, currentGuestScope } from './roles'
+import { scrubDb } from '../guest/guard'
 import { localRepository } from './repo'
 import { uid, today, addDays, range, hoursBetween, diffDays, csvHooks, dateOf } from '../lib/util'
 import { realHours, elapsedHours, entriesOverlap, isoOffset, localDate, hhmmOf, deviceTz, MAX_SHIFT_H } from './timemath'
@@ -101,6 +102,55 @@ const GUEST_WRITE_OK = /^(Signed in|Suggestion|Suggest|Feedback|Design note|Note
 const guestTab = () => useStore.getState().session?.role === 'guest' || guestContext()
 /** Every change is broadcast to other open windows (phone + office stay in sync, live). */
 const live: BroadcastChannel | null = typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel('southern-live') : null
+const payKey = (p: { date: string; amount: number; method: string; ref: string }) => `${p.date}|${p.amount}|${p.method}|${p.ref}`
+/** A tab that saved from an older copy sends the whole database. Keep crew, invoices, and payments this tab already added. */
+function keepLocalAdds(local: T.DB, incoming: T.DB): T.DB {
+  const db: T.DB = { ...incoming }
+  const asgIds = new Set(incoming.assignments.map(a => a.id))
+  const keptAsg = local.assignments.filter(a => !asgIds.has(a.id))
+  if (keptAsg.length) db.assignments = [...incoming.assignments, ...keptAsg.map(a => ({ ...a }))]
+  if (local.invoices && incoming.invoices) {
+    const invoices = incoming.invoices.map(i => ({ ...i, payments: [...(i.payments ?? [])] }))
+    const byId = new Map(invoices.map(i => [i.id, i]))
+    let touched = false
+    for (const li of local.invoices) {
+      const cur = byId.get(li.id)
+      if (!cur) { invoices.push({ ...li, payments: [...(li.payments ?? [])] }); touched = true; continue }
+      const have = new Set(cur.payments.map(payKey))
+      const extra = (li.payments ?? []).filter(p => !have.has(payKey(p)))
+      if (!extra.length) continue
+      cur.payments = [...cur.payments, ...extra.map(p => ({ ...p }))]
+      touched = true
+      if (cur.kind === 'Credit') continue
+      const paid = Math.min(cur.amount, Math.round(cur.payments.reduce((s, p) => s + p.amount, 0) * 100) / 100)
+      cur.paid = paid
+      if (paid >= cur.amount - 0.005) {
+        cur.status = 'Paid'; cur.collections = 'Paid'
+        const j = db.jobs.find(x => x.id === cur.jobId)
+        if (j && j.invoiceNo === cur.invNo && j.stage !== 'Paid') db.jobs = db.jobs.map(x => x.id === j.id ? { ...x, stage: 'Paid' as const } : x)
+      } else if (paid > 0 && cur.status !== 'Overdue') cur.status = 'Partial'
+    }
+    if (touched) db.invoices = invoices
+  }
+  if (local.bills && incoming.bills) {
+    const bills = incoming.bills.map(b => ({ ...b, payments: [...(b.payments ?? [])] }))
+    const byId = new Map(bills.map(b => [b.id, b]))
+    let touched = false
+    for (const lb of local.bills) {
+      const cur = byId.get(lb.id)
+      if (!cur) { bills.push({ ...lb, payments: [...(lb.payments ?? [])] }); touched = true; continue }
+      const ids = new Set((cur.payments ?? []).map(p => p.id))
+      const extra = (lb.payments ?? []).filter(p => p.id && !ids.has(p.id))
+      if (!extra.length) continue
+      cur.payments = [...(cur.payments ?? []), ...extra.map(p => ({ ...p }))]
+      touched = true
+      const tot = cur.lines.reduce((s, l) => s + l.amount, 0)
+      if (cur.payments.reduce((s, p) => s + p.amount, 0) >= tot - 0.005) { cur.status = 'Paid'; cur.paidOn = cur.paidOn ?? extra[extra.length - 1].date }
+    }
+    if (touched) db.bills = bills
+  }
+  return db
+}
 const loadSession = (): Session | null => { if (EMBED_ROLE) return null; try { const s = JSON.parse(sessionStorage.getItem('sc-session') || 'null'); return s && typeof s === 'object' && ROLES.some(r => r.key === s.role) && (s.role === 'guest' || !guestContext()) ? s : null } catch { return null } } // unknown role → sign-in screen, not a white screen
 const pageFromHash = (): PageKey | null => (location.hash.replace(/^#\/?/, '').split('?')[0] as PageKey) || null
 
@@ -155,12 +205,15 @@ export const useStore = create<State>((set, get) => ({
     set({ db, ready: true, ui: { ...get().ui, page, filter, denied: s && hp && hp !== page ? hp : null } })
     if (EMBED_ROLE && !get().session) { get().signIn(EMBED_ROLE); if (hp && roleDef(EMBED_ROLE).pages.includes(hp)) get().go(hp) }
     if (live) live.onmessage = (ev: MessageEvent) => {
-      const m = ev.data as { db: T.DB; action: string; entity: string; detail: string; actor: string; quiet?: boolean }
+      const m = ev.data as { db: T.DB; baseRev?: number; action: string; entity: string; detail: string; actor: string; quiet?: boolean }
       if (!m?.db || get().session?.role === 'guest') return // a guest tab keeps its scrubbed copy
-      set({ db: m.db })
+      let db = m.db
+      const local = get().db
+      if (local?.assignments && (m.baseRev ?? 0) < (local.savedRev ?? 0)) db = keepLocalAdds(local, db)
+      set({ db })
       clearUndo()
       clearTimeout(saveTimer); saveTimer = undefined
-      if (m.db.savedRev) remember(m.db)
+      if (db.savedRev) remember(db)
       if (!m.quiet) window.dispatchEvent(new CustomEvent('southern-live', { detail: m }))
     }
     window.addEventListener('online', () => set({ ui: { ...get().ui, online: true } }))
@@ -175,6 +228,12 @@ export const useStore = create<State>((set, get) => ({
     })
   },
   signIn(role, method = 'Demo role', asEmployeeId?: string) {
+    // A guest session exists only after a signed pass is verified. The role picker, a code, and a passkey cannot open the staff database as Guest.
+    if (role === 'guest') {
+      let pass = false
+      try { pass = method === 'Guest pass' && !!sessionStorage.getItem('sc-guest') } catch { pass = false }
+      if (!pass) return
+    }
     clearUndo()
     if (role !== 'guest' && guestContext()) { console.warn('Staff sign-in is off on a guest-pass browser'); return }
     const rd = roleDef(role)
@@ -184,6 +243,7 @@ export const useStore = create<State>((set, get) => ({
     // company-wide roles open on All Company; everyone else on their home branch
     const scope = scopeFor(get().db, role, session.employeeId); saveFilter(session, scope)
     set({ session, ui: { ...get().ui, page: rd.home, drawer: null, drawerStack: [], filter: scope } }); window.scrollTo({ top: 0 }); requestAnimationFrame(() => window.scrollTo({ top: 0 }))
+    if (role === 'guest') set({ db: scrubDb(get().db as unknown as Record<string, unknown>, currentGuestScope()) as unknown as T.DB })
     setHash(`/${rd.home}`)
     get().commit('Signed in', asEmployeeId && emp ? `${rd.label} · ${emp.craft}` : rd.label, `${session.name} · ${method}`, () => {}, { silent: true })
   },
@@ -217,11 +277,12 @@ export const useStore = create<State>((set, get) => ({
   setPrefs(p) { const prefs = { ...get().prefs, ...p }; localStorage.setItem('sc-prefs', JSON.stringify(prefs)); set({ prefs }) },
   async resetDemo() { if (guestContext() || get().session?.role === 'guest') { console.warn('Reset demo is off for guests'); return } clearUndo(); clearTimeout(saveTimer); saveTimer = undefined; try { localStorage.removeItem(PENDING_KEY); localStorage.removeItem(REV_KEY) } catch { /* */ } const db = await localRepository.reset(); set({ db, ui: { ...get().ui, drawer: null } })
     // dive3 S12: side stores (drug tests, rigging, moves, bids, NCCCO, union, offline queue, drafts…) live under their own sc-* keys — clear them too; keep this browser's settings (branding, security, passkeys, prefs)
-    const KEEP = ['sc-prefs', 'sc-branding-v1', 'sc-security', 'sc-passkeys', 'sc-gp-lock', 'sc-guest-passes', 'sc-backgrounds', 'sc-sched-colors-v1', 'sc-nav-v1', 'sc-fbdock-y', 'sc-data-reset', 'sc-guest', 'sc-guest-locked']
+    const KEEP = ['sc-prefs', 'sc-branding-v1', 'sc-brand-presets-v1', 'sc-security', 'sc-passkeys', 'sc-gp-lock', 'sc-guest-passes', 'sc-backgrounds', 'sc-sched-colors-v1', 'sc-nav-v1', 'sc-fbdock-y', 'sc-data-reset', 'sc-guest', 'sc-guest-locked']
     try { for (const st of [localStorage, sessionStorage]) for (const k of Object.keys(st)) if (k.startsWith('sc-') && !KEEP.includes(k) && k !== 'sc-session' && !k.startsWith('sc-db')) st.removeItem(k) } catch { /* private mode */ }
   },
   commit(action, entity, detail, recipe, opts) {
     if (guestTab() && !GUEST_WRITE_OK.test(action)) return // view-only guest: no data change, whatever calls it
+    const baseRev = get().db.savedRev ?? 0
     const db = structuredClone(get().db)
     recipe(db)
     const s = get().session
@@ -232,7 +293,7 @@ export const useStore = create<State>((set, get) => ({
     db.savedRev = Date.now()
     set({ db })
     if (guestTab()) return // guest copy is scrubbed + view-only: never broadcast or save it
-    if (live && action !== 'Signed in' && action !== 'Read notification') { try { live.postMessage({ db, action, entity, detail, actor: s?.name ?? 'System', quiet: !!opts?.silent && action !== 'Clocked out' }) } catch { /* ignore */ } }
+    if (live && action !== 'Signed in' && action !== 'Read notification') { try { live.postMessage({ db, baseRev, action, entity, detail, actor: s?.name ?? 'System', quiet: !!opts?.silent && action !== 'Clocked out' }) } catch { /* ignore */ } }
     clearTimeout(saveTimer)
     if (guestTab() || (get().db as unknown as { __guest?: boolean }).__guest) return
     // Durable even if the tab is killed before the debounced IndexedDB write. pagehide also flushes.
@@ -325,6 +386,8 @@ export const actions = {
       const dates = (opts.restOfJob ? range(date, j.endDate) : [date]).filter(d => schedulable(db, empId, d))
       dates.forEach(d => {
         if (opts.fromJobId) db.assignments = db.assignments.filter(a => !(a.employeeId === empId && a.date === d && a.jobId === opts.fromJobId))
+        // a later day already on another job stays there — rest-of-job must not double-book
+        if (db.assignments.some(a => a.employeeId === empId && a.date === d && a.jobId !== jobId)) return
         if (!db.assignments.some(a => a.employeeId === empId && a.date === d && a.jobId === jobId))
           db.assignments.push({ id: uid('asg'), jobId, date: d, employeeId: empId, position, source: opts.source ?? 'Dispatch' })
       })
@@ -367,7 +430,7 @@ export const actions = {
     const cfgT = (cfg?.trailerIds ?? []).filter(t => !handUnits.includes(t)), addT = cfgT.filter(t => !busyT(t)), skipT = cfgT.filter(busyT)
     const trailers = [...handUnits, ...addT]
     const unitName = (id: string) => byId(db0.equipment, id)?.unit ?? id
-    const moved = crewDecisions.filter(d => d.decision === 'move')
+    const moved = crewDecisions.filter(d => d.decision === 'move' && !byId(db0.employees, d.empId)?.ssHold)
     S().commit('Swapped crane', `Job #${j.jobNo}`, `Crane ${byId(db0.equipment, oldId)?.unit ?? '—'} → ${c.unit} · ${moved.length} crew moved with crane (confirmed individually) · units: ${trailers.map(unitName).join(', ') || 'none'}${skipT.length ? ` · not added (busy): ${skipT.map(unitName).join(', ')}` : ''}`, db => {
       const job = byId(db.jobs, jobId)!
       job.craneId = craneId
@@ -380,6 +443,7 @@ export const actions = {
       }
       const days = range(date, job.endDate)
       moved.forEach(d => {
+        if (byId(db.employees, d.empId)?.ssHold) return
         days.forEach(dd => {
           // only the board day was confirmed — on later days, don't pull someone off another job
           const other = db.assignments.find(a => a.employeeId === d.empId && a.date === dd && a.jobId !== jobId)
@@ -394,6 +458,7 @@ export const actions = {
       if (oldId) db.employees.filter(e => e.homeCraneId === oldId && db0.assignments.some(a => a.jobId === jobId && a.employeeId === e.id && a.date >= date) && !db.assignments.some(a => a.jobId === jobId && a.employeeId === e.id && a.date >= date)).forEach(e => crewNote(db, e.id, `Change: you’re off Job #${j.jobNo}`, `Crane ${c.unit} replaced ${byId(db.equipment, oldId)?.unit ?? ''} with its own crew · dispatch will call`, jobId))
       notifyJobCrew(db, jobId, `Job #${j.jobNo}: crane is now ${c.unit}`, `${byId(db.equipment, oldId)?.unit ?? '—'} → ${c.unit} from ${dayLabel(date)}`)
     })
+    clearUndo() // crane, trailers, and crew moved together — a roster redo must not put the old seat back on top
     return { skipped: skipT.map(unitName) }
   },
   setJobStatus(jobId: string, status: T.JobStatus) {
@@ -474,11 +539,22 @@ export const actions = {
     const r = rateFor(x.kind, x.role), ses = S().session
     const e: T.JobExtra = { id: uid('jx'), kind: x.kind, role: x.role, qty, action: x.action ?? 'add', from, fromTime: x.fromTime || undefined, to: x.to || undefined, reason: x.reason?.trim() || undefined, billable: x.billable ?? true, rate: r.rate, cost: r.cost, at: new Date().toISOString(), by: ses?.name ?? 'System' }
     const what = `${extraLabel(e)} from ${from}${e.fromTime ? ` ${e.fromTime}` : ''}${e.to ? ` to ${e.to}` : ''} · ${e.billable ? 'billable' : 'non-billable (absorbed)'}`
+    const beforeCrew = e.action === 'remove' && e.kind === 'person' ? db0.assignments.map(a => ({ ...a })) : undefined
     S().commit(e.action === 'remove' ? 'Removed from job' : 'Added to job', `Job #${j.jobNo}`, `${what}${e.reason ? ` · ${e.reason}` : ''}`, db => {
       const jj = byId(db.jobs, jobId)!; jj.extras = [...(jj.extras ?? []), e]
+      if (e.action === 'remove' && e.kind === 'person') {
+        const end = extraEnd(jj, e)
+        for (const d of range(from, end)) {
+          const hits = db.assignments.filter(a => a.jobId === jobId && a.date === d && a.position === e.role).slice(0, e.qty)
+          if (!hits.length) continue
+          const ids = new Set(hits.map(a => a.id))
+          db.assignments = db.assignments.filter(a => !ids.has(a.id))
+        }
+      }
       billingReviewAdd(db, jj, what, e.reason, from, extraEnd(jj, e))
       db.notices.unshift({ id: uid('n'), at: new Date().toISOString(), severity: 'Info', title: `Job #${j.jobNo}: ${extraLabel(e)}`, body: `${what}. Tickets ${e.billable ? (e.action === 'remove' ? 'credit' : 'charge') + ' the customer' : 'unchanged — absorbed cost'}.`, mandatory: false, roles: ['dispatch', 'ops', 'accounting', 'branch'], ref: { type: 'job', id: jobId }, read: false })
     })
+    if (beforeCrew) noteRosterChange(`Remove ${e.role}`, beforeCrew)
     return { ok: true as const, id: e.id }
   },
   updateExtra(jobId: string, id: string, patch: Partial<Pick<T.JobExtra, 'qty' | 'from' | 'fromTime' | 'to' | 'reason' | 'billable'>>) {
@@ -533,13 +609,18 @@ export const actions = {
         if (jj.unitDays) jj.unitDays = Object.fromEntries(Object.entries(jj.unitDays).map(([k, v]) => [k, { from: addDaysIso(v.from, delta), to: addDaysIso(v.to, delta) }]))
       }
       const now = today()
-      if (r.shiftCrew && delta) db.assignments = db.assignments.map(a => a.jobId === jobId && a.date >= now ? { ...a, date: addDaysIso(a.date, delta) } : a)
+      if (r.shiftCrew && delta) db.assignments = db.assignments.map(a => {
+        if (a.jobId !== jobId || a.date < now) return a
+        const nd = addDaysIso(a.date, delta)
+        const clash = db.assignments.some(x => x.id !== a.id && x.employeeId === a.employeeId && x.date === nd && x.jobId !== jobId)
+        return clash ? a : { ...a, date: nd }
+      })
       // dive3 M2: anyone dropped because their days fall outside the new dates hears about it
       const dropped = db.assignments.filter(a => a.jobId === jobId && a.date >= now && (a.date < r.start || a.date > r.end))
       db.assignments = db.assignments.filter(a => a.jobId !== jobId || a.date < now || (a.date >= r.start && a.date <= r.end))
       ;[...new Set(dropped.map(a => a.employeeId))].forEach(id => { const ds = dropped.filter(a => a.employeeId === id).map(a => a.date).sort(); crewNote(db, id, `Change: you’re off Job #${j.jobNo}`, `${ds.length} day${ds.length > 1 ? 's' : ''} from ${dayLabel(ds[0])} — the job moved to ${dayLabel(r.start)} → ${dayLabel(r.end)}. Dispatch will call.`, jobId) })
       const body = `${dayLabel(r.start)} → ${dayLabel(r.end)}${r.time ? ` · start ${r.time}` : ''}${r.reason ? ` · ${r.reason}` : ''}`
-      if (r.shiftCrew && delta && jj.extras?.length) jj.extras = jj.extras.map(x => ({ ...x, from: addDaysIso(x.from, delta), to: x.to ? addDaysIso(x.to, delta) : x.to }))
+      if (delta && (r.shiftCrew || r.shiftUnits !== false) && jj.extras?.length) jj.extras = jj.extras.map(x => ({ ...x, from: addDaysIso(x.from, delta), to: x.to ? addDaysIso(x.to, delta) : x.to }))
       notifyJobCrew(db, jobId, `Job #${j.jobNo} rescheduled`, body)
       // Req H: supervisor and PM always hear about it, even if not on the crew list yet
       const told = new Set(db.assignments.filter(a => a.jobId === jobId && a.date >= now).map(a => a.employeeId))
@@ -559,15 +640,27 @@ export const actions = {
 
   // ----- time -----
   submitTime(e: Omit<T.TimeEntry, 'id' | 'hours' | 'status' | 'submittedAt'>, o?: { hours?: number; flag?: string }): { ok: boolean; reason?: string } {
+    const wall = (t: string) => { const [hh, mm] = (t || '0:0').split(':').map(Number); return (hh || 0) * 60 + (mm || 0) }
+    // A typed shift that runs past midnight is two calendar days. A clock-out already passes the real elapsed hours and stays on the start day, including a DST night.
+    if (o?.hours == null && e.start && e.end && wall(e.end) > 0 && wall(e.end) < wall(e.start)) {
+      const flag = o?.flag ? { flag: o.flag } : undefined
+      const head = actions.submitTime({ ...e, end: '00:00', mealMin: 0 }, flag)
+      const tail = actions.submitTime({ ...e, date: addDays(e.date, 1), start: '00:00' }, flag)
+      return { ok: !!(head.ok && tail.ok), reason: head.reason ?? tail.reason }
+    }
     const db0 = S().db
     const dup = db0.time.find(t => t.employeeId === e.employeeId && t.date === e.date && t.jobId === e.jobId && t.activity === e.activity && t.start === e.start)
     if (dup) return { ok: false, reason: 'Duplicate — this exact entry was already submitted.' }
     const overlap = db0.time.find(t => t.employeeId === e.employeeId && Math.abs(diffDays(t.date, e.date)) <= 1 && entriesOverlap(t, e)) // real spans: works for overnight shifts
     const hours = o?.hours ?? realHours(e.date, e.start, e.end, e.mealMin) // DST-correct; end ≤ start = ran past midnight
+    const over = hours > MAX_SHIFT_H // same 16 h line as the field form
+    const flagged = !!(overlap || over || o?.flag)
+    const why = o?.flag ?? (overlap ? 'Overlaps another entry — review' : over ? `Over ${MAX_SHIFT_H} h — verify` : e.note)
     S().commit('Submitted time', emp(db0, e.employeeId), `${e.date} · ${hours}h · ${e.activity}${e.jobId ? ` · Job #${jobNo(db0, e.jobId)}` : ''}`, db => {
-      db.time.push({ ...e, id: uid('te'), hours, status: overlap || hours > 14 || o?.flag ? 'Flagged' : 'Submitted', note: o?.flag ?? (overlap ? 'Overlaps another entry — review' : hours > 14 ? 'Long shift — verify' : e.note), submittedAt: new Date().toISOString() })
+      db.time.push({ ...e, id: uid('te'), hours, status: flagged ? 'Flagged' : 'Submitted', note: why, submittedAt: new Date().toISOString() })
     })
-    return { ok: true }
+    // A shift between 14 h and 16 h is still filed, and the person is told a supervisor will look at it. Over 16 h is flagged.
+    return { ok: true, reason: flagged ? (o?.flag ?? (overlap ? 'Overlaps another entry — review' : `Flagged — over ${MAX_SHIFT_H} hours`)) : hours > 14 ? 'Long shift held for review' : undefined }
   },
   /** Employee/supervisor explains an over/under day. Cost of the extra hours lands on the unit, job or overhead. */
   timeReason(o: { employeeId: string; date: string; reason: string; note?: string; unitId?: string; jobId?: string }) {
@@ -1012,7 +1105,12 @@ export const actions = {
   addCert(c: Omit<T.Cert, 'id'>) { S().commit('Added certification', emp(S().db, c.employeeId), `${c.type} exp ${c.expires}`, db => { db.certs.push({ ...c, id: uid('cert') }) }) },
   verifyCert(id: string, v: T.Cert['verified']) { const c = byId(S().db.certs, id)!; S().commit('Reviewed certification', emp(S().db, c.employeeId), `${c.type}: ${v}`, db => { const x = byId(db.certs, id)!; x.verified = v; if (x.pendingExpires) { if (v === 'Verified') { x.issued = today(); x.expires = x.pendingExpires; if (x.pendingProof) x.proof = x.pendingProof } if (v !== 'Needs Review') { delete x.pendingExpires; delete x.pendingProof; if (v === 'Rejected') x.verified = 'Verified' } } }) }, // dive2: a renewal only takes effect once verified; rejecting it keeps the old card
   renewCert(id: string, expires: string, proof?: string) { const c = byId(S().db.certs, id)!; S().commit('Renewal logged (pending verification)', emp(S().db, c.employeeId), `${c.type} → ${expires}${proof ? ` · proof ${proof}` : ''}`, db => { const x = byId(db.certs, id)!; x.pendingExpires = expires; x.pendingProof = proof; x.verified = 'Needs Review' }) }, // dive2: printed expiry waits for verification; current date stays in force
-  addIncident(i: Omit<T.Incident, 'id' | 'no'>) { S().commit('Reported incident', i.kind, i.description.slice(0, 60), db => { const yr = (i.date || today()).slice(0, 4), n = Math.max(0, ...db.incidents.filter(x => x.no.startsWith(`INC-${yr}-`)).map(x => Number(x.no.split('-')[2]) || 0)) + 1; db.incidents.unshift({ ...i, id: uid('inc'), no: `INC-${yr}-${String(n).padStart(3, '0')}` }); /* dive3 T3b: numbers restart each year */ db.notices.unshift({ id: uid('n'), at: new Date().toISOString(), severity: i.severity === 'High' ? 'Urgent' : 'Action Required', title: `${i.kind} reported`, body: i.description.slice(0, 80), mandatory: true, roles: ['safety', 'owner', 'ops'], read: false }); if (i.kind === 'Recordable' || i.kind === 'Vehicle') db.notices.unshift({ id: uid('n'), at: new Date().toISOString(), severity: 'Urgent', title: `${i.kind} — decide on a DOT post-accident test`, body: 'Alcohol within 8 h, drugs within 32 h (§382.303). Order it on Drug & Alcohol → Tests.', mandatory: true, roles: ['der'], read: false }) }) },
+  addIncident(i: Omit<T.Incident, 'id' | 'no'>) {
+    const involved = [...new Set([i.employeeId].filter((id): id is string => !!id && !!byId(S().db.employees, id)))]
+    S().commit('Reported incident', i.kind, i.description.slice(0, 60), db => { const yr = (i.date || today()).slice(0, 4), n = Math.max(0, ...db.incidents.filter(x => x.no.startsWith(`INC-${yr}-`)).map(x => Number(x.no.split('-')[2]) || 0)) + 1; db.incidents.unshift({ ...i, id: uid('inc'), no: `INC-${yr}-${String(n).padStart(3, '0')}` }); /* dive3 T3b: numbers restart each year */ db.notices.unshift({ id: uid('n'), at: new Date().toISOString(), severity: i.severity === 'High' ? 'Urgent' : 'Action Required', title: `${i.kind} reported`, body: i.description.slice(0, 80), mandatory: true, roles: ['safety', 'owner', 'ops'], read: false }); if (i.kind === 'Recordable' || i.kind === 'Vehicle') db.notices.unshift({ id: uid('n'), at: new Date().toISOString(), severity: 'Urgent', title: `${i.kind} — decide on a DOT post-accident test`, body: 'Alcohol within 8 h, drugs within 32 h (§382.303). Order it on Drug & Alcohol → Tests.', mandatory: true, roles: ['der'], read: false }) })
+    // Anyone named on the report is off the board until the DER clears them. Do not touch setCrane or assign here.
+    for (const id of involved) if (!byId(S().db.employees, id)?.ssHold) actions.ssHold(id, true)
+  },
   updateIncident(id: string, patch: Partial<T.Incident>): boolean { const cur = byId(S().db.incidents, id)!; const nx = { ...cur, ...patch } // dive2: a Recordable can't be closed without a root cause + corrective action
     if (patch.status === 'Closed' && (nx.kind === 'Recordable' ? (!nx.correctiveAction?.trim() || !nx.rootCause?.trim()) : !nx.correctiveAction?.trim())) return false // dive3: every kind needs a corrective action to close
     S().commit('Updated incident', cur.no, Object.keys(patch).join(', '), db => { Object.assign(byId(db.incidents, id)!, patch, patch.status === 'Closed' ? { closedBy: S().session?.name } : {}) }); return true },
@@ -1046,13 +1144,15 @@ export const actions = {
     return { hire, warn: dupe ? 'An employee or hire with this name already exists — confirm this is a different person.' : dupePhone ? 'Phone number matches an existing employee.' : undefined }
   },
   hireStep(id: string, step: string, v: boolean) { S().commit('Onboarding step', byId(S().db.hires, id)!.first, `${step}: ${v ? 'done' : 'open'}`, db => { byId(db.hires, id)!.steps[step] = v }) },
-  activateHire(id: string, opt?: { noDrive?: string }): string | undefined {
+  activateHire(id: string, opt?: { noDrive?: string; certs?: { type: string }[]; force?: boolean }): string | undefined {
     const h = byId(S().db.hires, id)
-    if (!h) return
+    // Orientation still open blocks a silent activation. A recorded non-driving reason, or an explicit "Activate now", is allowed.
+    if (!h || (!h.steps?.training && !opt?.noDrive && !opt?.force)) return
     const newId = uid('emp')
     S().commit('Activated employee', `${h.first} ${h.last}`, `${h.empNo} moved to active roster${opt?.noDrive ? ' · non-driving until DOT cleared' : ''}`, db => {
       db.hires = db.hires.filter(x => x.id !== id)
       db.employees.push({ ...(opt?.noDrive ? { noDrive: opt.noDrive } : {}), id: newId, empNo: h.empNo, first: h.first, last: h.last, craft: h.craft, phone: h.phone, email: h.email, supervisorId: h.supervisorId, status: 'Active', perDiemBlocked: [], hireDate: h.start, city: byId(db.branches, h.branchId ?? 'br-okc')?.city ?? 'Oklahoma City', rate: h.rate ?? 28, divisionId: h.divisionId ?? 'div-slh', branchId: h.branchId ?? 'br-okc' })
+      for (const c of opt?.certs ?? []) db.certs.push({ id: uid('cert'), employeeId: newId, type: c.type as T.CertType, credentialNo: 'TRAIN', provider: 'Orientation', issued: today(), expires: addDays(today(), 365), verified: 'Verified' })
     })
     return newId
   },
@@ -1145,9 +1245,10 @@ export const actions = {
     const db0 = S().db; const j = byId(db0.jobs, jobId)!
     const tickets = db0.tickets.filter(t => t.jobId === jobId && (t.signerName || t.signedAt))
     // Bill what the customer signed: one day per distinct signed-ticket date (fallback to scheduled days only when nothing is signed).
-    const signedDays = new Set(tickets.map(t => t.date)).size
+    const signedDates = new Set(tickets.map(t => t.date))
+    const signedDays = signedDates.size
     const days = signedDays || Math.min(diffDays(j.endDate, j.startDate) + 1, Math.max(1, diffDays(today(), j.startDate) + 1))
-    return [{ description: `${j.craneId ? 'Crane & crew' : 'Crew & equipment'} day rate — ${days} days (${signedDays ? `${signedDays} signed ticket days` : 'no signed tickets — verify'})`, qty: days, rate: j.dayRate }, ...(j.quote.mobDemob ? [{ description: 'Mobilization / demobilization', qty: 1, rate: j.quote.mobDemob }] : []), ...customerExtraLines(j)]
+    return [{ description: `${j.craneId ? 'Crane & crew' : 'Crew & equipment'} day rate — ${days} days (${signedDays ? `${signedDays} signed ticket days` : 'no signed tickets — verify'})`, qty: days, rate: j.dayRate }, ...(j.quote.mobDemob ? [{ description: 'Mobilization / demobilization', qty: 1, rate: j.quote.mobDemob }] : []), ...customerExtraLines(j, undefined, signedDays ? signedDates : undefined)]
   },
   createInvoice(jobId: string, o?: { lines?: T.Invoice['lines']; customerPo?: string }) {
     const db0 = S().db
@@ -1206,26 +1307,34 @@ export const actions = {
   },
   recordPayment(invId: string, amount: number, method: string, ref: string, date: string = today()) {
     const i = byId(S().db.invoices, invId)!
-    amount = Math.round(Math.min(amount, i.amount - i.paid) * 100) / 100
+    const refKey = ref.trim().toLowerCase()
+    if (refKey && i.payments.some(p => p.method === method && p.ref.trim().toLowerCase() === refKey)) return
+    const open = Math.round((i.amount - i.paid) * 100) / 100
+    amount = Math.round(Math.min(amount, open) * 100) / 100
     if (!(amount > 0)) return
     S().commit('Recorded payment', i.invNo, `$${amount.toLocaleString()} ${method} ${ref}`, db => {
-      const x = byId(db.invoices, invId)!; x.paid = Math.min(x.amount, x.paid + amount); x.payments.push({ date, amount, method, ref })
-      x.status = x.paid >= x.amount ? 'Paid' : 'Partial'; if (x.status === 'Paid') { x.collections = 'Paid'; const j = byId(db.jobs, x.jobId); if (j && j.invoiceNo === x.invNo) j.stage = 'Paid' }
+      const x = byId(db.invoices, invId)!
+      x.payments.push({ date, amount, method, ref })
+      x.paid = Math.round(Math.min(x.amount, x.payments.reduce((s, q) => s + q.amount, 0)) * 100) / 100
+      x.status = x.paid >= x.amount - 0.005 ? 'Paid' : 'Partial'; if (x.status === 'Paid') { x.paid = x.amount; x.collections = 'Paid'; const j = byId(db.jobs, x.jobId); if (j && j.invoiceNo === x.invNo) j.stage = 'Paid' }
     })
   },
   undoPayment(invId: string, idx: number) {
     const i = byId(S().db.invoices, invId)!; const p = i.payments[idx]; if (!p) return
     S().commit('Undid payment', i.invNo, `−$${p.amount.toLocaleString()} ${p.method} ${p.ref}`, db => {
       const x = byId(db.invoices, invId)!; x.payments.splice(idx, 1); x.paid = Math.max(0, Math.round(x.payments.reduce((s, q) => s + q.amount, 0) * 100) / 100)
-      x.status = x.paid >= x.amount ? 'Paid' : x.paid > 0 ? 'Partial' : x.due < today() ? 'Overdue' : 'Sent'
+      x.status = x.paid >= x.amount - 0.005 ? 'Paid' : x.paid > 0 ? 'Partial' : x.due < today() ? 'Overdue' : 'Sent'
+      if (x.status === 'Paid') x.paid = x.amount
       if (x.status !== 'Paid') { if (x.collections === 'Paid') x.collections = 'Current'; const j = byId(db.jobs, x.jobId); if (j && j.invoiceNo === x.invNo && j.stage === 'Paid') j.stage = 'Invoiced' }
     })
   },
   payBill(billId: string, p: { amount: number; date: string; method: string; ref: string }) {
-    const b = byId(S().db.bills, billId)!; const tot = b.lines.reduce((s, l) => s + l.amount, 0); const paid = (b.payments ?? []).reduce((s, q) => s + q.amount, 0)
+    const b = byId(S().db.bills, billId)!; const tot = Math.round(b.lines.reduce((s, l) => s + l.amount, 0) * 100) / 100; const paid = Math.round((b.payments ?? []).reduce((s, q) => s + q.amount, 0) * 100) / 100
+    const refKey = p.ref.trim().toLowerCase()
+    if (refKey && (b.payments ?? []).some(q => q.method === p.method && q.ref.trim().toLowerCase() === refKey)) return { ok: false, reason: 'That reference is already on this bill.' }
     const amount = Math.round(Math.min(p.amount, tot - paid) * 100) / 100
     if (!(amount > 0)) return { ok: false, reason: 'Nothing left to pay' }
-    S().commit('Paid bill', b.billNo, `$${amount.toLocaleString()} ${p.method} ${p.ref}${amount < tot - paid ? ' (partial)' : ''}`, db => {
+    S().commit('Paid bill', b.billNo, `$${amount.toLocaleString()} ${p.method} ${p.ref}${amount < tot - paid - 0.005 ? ' (partial)' : ''}`, db => {
       const x = byId(db.bills, billId)!; x.payments = [...(x.payments ?? []), { id: uid('bp'), ...p, amount, by: S().session?.name }]
       if (x.payments.reduce((s, q) => s + q.amount, 0) >= tot - 0.005) { x.status = 'Paid'; x.paidOn = p.date }
     })
@@ -1238,7 +1347,13 @@ export const actions = {
     })
   },
   setCollections(invId: string, c: T.Invoice['collections']) { S().commit('Collections status', byId(S().db.invoices, invId)!.invNo, c, db => { byId(db.invoices, invId)!.collections = c }) },
-  addCost(c: Omit<T.JobCost, 'id'>) { S().commit('Posted job cost', `Job #${jobNo(S().db, c.jobId)}`, `${c.category} $${c.amount.toLocaleString()}`, db => { db.costs.push({ ...c, id: uid('co') }) }) },
+  addCost(c: Omit<T.JobCost, 'id'>) {
+    const amount = Math.round(Number(c.amount) * 100) / 100
+    if (!Number.isFinite(amount) || amount <= 0) return { ok: false as const, reason: 'Amount must be more than $0.' }
+    if (amount > BILL_MAX) return { ok: false as const, reason: `Amount over $${BILL_MAX.toLocaleString()} — check the number.` }
+    S().commit('Posted job cost', `Job #${jobNo(S().db, c.jobId)}`, `${c.category} $${amount.toLocaleString()}`, db => { db.costs.push({ ...c, amount, id: uid('co') }) })
+    return { ok: true as const }
+  },
 
   // ----- configs -----
   saveConfig(c: T.CraneConfig) { S().commit('Saved crane configuration', byId(S().db.equipment, c.craneId)!.unit, c.name, db => { db.configs = db.configs.filter(x => x.id !== c.id); db.configs.push(c) }) },

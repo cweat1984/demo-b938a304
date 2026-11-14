@@ -42,7 +42,13 @@ for (const [name, br, opts] of [['iphone', wk, devices['iPhone 14']], ['pixel7',
 // framing: another site can't frame the owner app (with or without ?as=owner); our own Phone + office page still can
 { const c = await cr.newContext(); const p = await c.newPage(); await p.setContent(`<iframe src="${B}?as=owner" width=900 height=700></iframe>`); await p.waitForTimeout(5000)
   const fr = p.frames().find(f => f.url().startsWith(B)); ok(fr && /inside another site/.test(await fr.textContent('body').catch(() => '')), 'owner app framed by another site with ?as=owner: refused')
-  const q = await c.newPage(); await q.addInitScript(() => localStorage.setItem('sc-tour-seen', '1')); await q.goto(B + '?sync=1'); await q.waitForTimeout(8000)
-  const ph = q.frames().find(f => /as=field/.test(f.url())); const pt = ph ? await ph.textContent('body').catch(() => '') : ''
+  const q = await c.newPage(); await q.addInitScript(() => localStorage.setItem('sc-tour-seen', '1')); await q.goto(B + '?sync=1'); await q.waitForSelector('[data-testid=sync-phone]', { timeout: 20000 })
+  let ph, pt = ''
+  for (let i = 0; i < 20; i++) {
+    ph = q.frames().find(f => /as=field/.test(f.url()))
+    pt = ph ? await ph.textContent('body').catch(() => '') : ''
+    if (ph && !/inside another site/.test(pt) && pt.length > 50) break
+    await q.waitForTimeout(500)
+  }
   ok(ph && !/inside another site/.test(pt) && pt.length > 50, 'Phone + office demo (same-site frames) still works'); await c.close() }
 await cr.close(); await wk.close(); console.log(fails ? `${fails} FAILED` : 'ALL PASS'); process.exit(fails ? 1 : 0)

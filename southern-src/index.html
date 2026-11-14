@@ -14,16 +14,6 @@
   </head>
   <body>
     <div id="root"></div>
-    <script>
-      // Runs before the module graph. Another site's frame never gets storage (Chrome denies it) or the app.
-      (function () {
-        if (window.top === window.self) return
-        try { if (window.parent.location.origin === location.origin) return } catch (e) { /* foreign */ }
-        var open = location.origin + location.pathname
-        document.documentElement.innerHTML = '<head><meta charset="utf-8"><title>Southern Command</title></head><body><div style="font:16px system-ui;padding:40px;text-align:center;color:#ddd;background:#0b0d10;min-height:100vh">This app can’t be shown inside another site. <a style="color:#7cc4ff" target="_top" rel="noopener" href="' + open + '">Open it in its own tab</a>.</div></body>'
-        window.stop()
-      })()
-    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
