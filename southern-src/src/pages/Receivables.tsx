@@ -5,7 +5,7 @@ import { Receipt, Download } from 'lucide-react'
 import type * as T from '../data/types'
 import { useStore, actions } from '../data/store'
 import { inScope, byId, agingBucket, customerOf } from '../data/logic'
-import { cn, fmtDate, money, downloadCsv, today, diffDays } from '../lib/util'
+import { cn, fmtDate, money, money2, downloadCsv, today, diffDays } from '../lib/util'
 import { PageHeader, Segmented, Badge, Button, Card, Empty, CallButton, confirmChoice } from '../components/ui'
 import { InvoicePreview } from '../components/InvoicePreview'
 import { BillingReviewList } from '../components/JobExtras'
@@ -20,7 +20,8 @@ export default function Receivables() {
   const [bucket, setBucket] = useState<string | null>(null)
   const [preview, setPreview] = useState<string | null>(null)
   const inv = useMemo(() => db.invoices.filter(i => inScope(byId(db.jobs, i.jobId), f)), [db, f])
-  const openInv = inv.filter(i => i.paid < i.amount)
+  const unsettled = (i: T.Invoice) => Math.abs(i.amount - i.paid) > 0.005
+  const openInv = inv.filter(unsettled)
   const totals = Object.fromEntries(BUCKETS.map(b => [b, openInv.filter(i => agingBucket(i) === b).reduce((s, i) => s + i.amount - i.paid, 0)]))
   const ar = openInv.reduce((s, i) => s + i.amount - i.paid, 0)
   // Ready to bill = work is done AND every ticket is customer-signed (customers pay for what they signed)
@@ -28,7 +29,7 @@ export default function Receivables() {
   // Complete but NOT billable — say why (unsigned / no tickets) so AR knows who to chase.
   const blocked = db.jobs.filter(j => inScope(j, f) && !j.invoiceNo && j.stage === 'Complete' && !ready.includes(j)).map(j => { const tk = db.tickets.filter(t => t.jobId === j.id), un = tk.filter(t => !t.signedAt); return { j, why: !tk.length ? 'No field tickets submitted' : `${un.length} of ${tk.length} ticket${tk.length > 1 ? 's' : ''} not customer-signed (${un.slice(0, 3).map(t => t.date.slice(5)).join(', ')}${un.length > 3 ? '…' : ''})` } })
   const paidMonth = inv.flatMap(i => i.payments).filter(p => p.date.slice(0, 7) === today().slice(0, 7)).reduce((s, p) => s + p.amount, 0)
-  const list = (tab === 'open' ? openInv.filter(i => !bucket || agingBucket(i) === bucket) : inv.filter(i => i.paid >= i.amount)).sort((a, b) => a.due.localeCompare(b.due))
+  const list = (tab === 'open' ? openInv.filter(i => !bucket || agingBucket(i) === bucket) : inv.filter(i => !unsettled(i))).sort((a, b) => a.due.localeCompare(b.due))
   return (
     <div className="max-w-[1400px] mx-auto">
       <PageHeader eyebrow="Accounts receivable" title={<span><span className="num">{money(ar, true)}</span> outstanding</span>} sub={`${openInv.length} open invoice${openInv.length === 1 ? "" : "s"} · ${money(paidMonth, true)} collected this month · ${ready.length} job${ready.length === 1 ? "" : "s"} ready to bill`} actions={<Button icon={<Download className="size-4" />} onClick={() => downloadCsv('ar-aging.csv', [['Invoice', 'Customer', 'Job', 'Date', 'Due', 'Amount', 'Paid', 'Balance', 'Aging', 'Collections'], ...openInv.map(i => [i.invNo, byId(db.customers, i.customerId)?.name, byId(db.jobs, i.jobId)?.jobNo, i.date, i.due, i.amount, i.paid, i.amount - i.paid, agingBucket(i), i.collections])])}>Aging export</Button>} />
@@ -51,7 +52,7 @@ export default function Receivables() {
         <div className="card p-0 overflow-hidden">{list.map(i => { const c = byId(db.customers, i.customerId)!; const ag = agingBucket(i); const late = diffDays(today(), i.due); return (
           <div key={i.id} className="flex items-center gap-4 px-5 py-3 border-b hairline last:border-0 hover:bg-surface-2 transition">
             <button onClick={() => open({ type: 'invoice', id: i.id })} className="flex-1 min-w-0 text-left"><span className="block font-semibold text-sm">{i.invNo}{i.kind ? ` · ${i.kind === 'Credit' ? 'Credit memo' : 'Supplemental'} to ${i.ofInvNo}` : ''} · {c.name}</span><span className="block text-xs text-muted">Job #{byId(db.jobs, i.jobId)?.jobNo} · issued {fmtDate(i.date)} · due {fmtDate(i.due)}{late > 0 && i.paid < i.amount ? ` · ${late}d late` : ''}</span></button>
-            <span className="w-28 text-right num font-semibold">{money(i.amount - i.paid)}</span>
+            <span className="w-28 text-right num font-semibold">{money2(i.amount - i.paid)}</span>
             <span className="w-20 hidden md:block"><Badge tone={ag === 'Paid' ? 'ok' : ag === 'Current' ? 'neutral' : ag === '1–30' ? 'info' : ag === '31–60' ? 'warn' : 'bad'}>{ag}</Badge></span>
             {tab === 'open' && <select className="input w-44 h-9 py-1 text-sm hidden lg:block" value={i.collections} onChange={e => actions.setCollections(i.id, e.target.value as T.Invoice['collections'])}>{['Current', 'Reminder Sent', 'Call Scheduled', 'Collections'].map(s => <option key={s}>{s}</option>)}</select>}
             {tab === 'open' && <CallButton phone={c.phone} label="Call" size="sm" />}

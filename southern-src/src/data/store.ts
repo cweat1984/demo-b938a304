@@ -1235,9 +1235,10 @@ export const actions = {
     const db0 = S().db; const j = byId(db0.jobs, jobId)!
     const tickets = db0.tickets.filter(t => t.jobId === jobId && (t.signerName || t.signedAt))
     // Bill what the customer signed: one day per distinct signed-ticket date (fallback to scheduled days only when nothing is signed).
-    const signedDays = new Set(tickets.map(t => t.date)).size
+    const signedDates = new Set(tickets.map(t => t.date))
+    const signedDays = signedDates.size
     const days = signedDays || Math.min(diffDays(j.endDate, j.startDate) + 1, Math.max(1, diffDays(today(), j.startDate) + 1))
-    return [{ description: `${j.craneId ? 'Crane & crew' : 'Crew & equipment'} day rate — ${days} days (${signedDays ? `${signedDays} signed ticket days` : 'no signed tickets — verify'})`, qty: days, rate: j.dayRate }, ...(j.quote.mobDemob ? [{ description: 'Mobilization / demobilization', qty: 1, rate: j.quote.mobDemob }] : []), ...customerExtraLines(j)]
+    return [{ description: `${j.craneId ? 'Crane & crew' : 'Crew & equipment'} day rate — ${days} days (${signedDays ? `${signedDays} signed ticket days` : 'no signed tickets — verify'})`, qty: days, rate: j.dayRate }, ...(j.quote.mobDemob ? [{ description: 'Mobilization / demobilization', qty: 1, rate: j.quote.mobDemob }] : []), ...customerExtraLines(j, undefined, signedDays ? signedDates : undefined)]
   },
   createInvoice(jobId: string, o?: { lines?: T.Invoice['lines']; customerPo?: string }) {
     const db0 = S().db
@@ -1296,26 +1297,34 @@ export const actions = {
   },
   recordPayment(invId: string, amount: number, method: string, ref: string, date: string = today()) {
     const i = byId(S().db.invoices, invId)!
-    amount = Math.round(Math.min(amount, i.amount - i.paid) * 100) / 100
+    const refKey = ref.trim().toLowerCase()
+    if (refKey && i.payments.some(p => p.method === method && p.ref.trim().toLowerCase() === refKey)) return
+    const open = Math.round((i.amount - i.paid) * 100) / 100
+    amount = Math.round(Math.min(amount, open) * 100) / 100
     if (!(amount > 0)) return
     S().commit('Recorded payment', i.invNo, `$${amount.toLocaleString()} ${method} ${ref}`, db => {
-      const x = byId(db.invoices, invId)!; x.paid = Math.min(x.amount, x.paid + amount); x.payments.push({ date, amount, method, ref })
-      x.status = x.paid >= x.amount ? 'Paid' : 'Partial'; if (x.status === 'Paid') { x.collections = 'Paid'; const j = byId(db.jobs, x.jobId); if (j && j.invoiceNo === x.invNo) j.stage = 'Paid' }
+      const x = byId(db.invoices, invId)!
+      x.payments.push({ date, amount, method, ref })
+      x.paid = Math.round(Math.min(x.amount, x.payments.reduce((s, q) => s + q.amount, 0)) * 100) / 100
+      x.status = x.paid >= x.amount - 0.005 ? 'Paid' : 'Partial'; if (x.status === 'Paid') { x.paid = x.amount; x.collections = 'Paid'; const j = byId(db.jobs, x.jobId); if (j && j.invoiceNo === x.invNo) j.stage = 'Paid' }
     })
   },
   undoPayment(invId: string, idx: number) {
     const i = byId(S().db.invoices, invId)!; const p = i.payments[idx]; if (!p) return
     S().commit('Undid payment', i.invNo, `−$${p.amount.toLocaleString()} ${p.method} ${p.ref}`, db => {
       const x = byId(db.invoices, invId)!; x.payments.splice(idx, 1); x.paid = Math.max(0, Math.round(x.payments.reduce((s, q) => s + q.amount, 0) * 100) / 100)
-      x.status = x.paid >= x.amount ? 'Paid' : x.paid > 0 ? 'Partial' : x.due < today() ? 'Overdue' : 'Sent'
+      x.status = x.paid >= x.amount - 0.005 ? 'Paid' : x.paid > 0 ? 'Partial' : x.due < today() ? 'Overdue' : 'Sent'
+      if (x.status === 'Paid') x.paid = x.amount
       if (x.status !== 'Paid') { if (x.collections === 'Paid') x.collections = 'Current'; const j = byId(db.jobs, x.jobId); if (j && j.invoiceNo === x.invNo && j.stage === 'Paid') j.stage = 'Invoiced' }
     })
   },
   payBill(billId: string, p: { amount: number; date: string; method: string; ref: string }) {
-    const b = byId(S().db.bills, billId)!; const tot = b.lines.reduce((s, l) => s + l.amount, 0); const paid = (b.payments ?? []).reduce((s, q) => s + q.amount, 0)
+    const b = byId(S().db.bills, billId)!; const tot = Math.round(b.lines.reduce((s, l) => s + l.amount, 0) * 100) / 100; const paid = Math.round((b.payments ?? []).reduce((s, q) => s + q.amount, 0) * 100) / 100
+    const refKey = p.ref.trim().toLowerCase()
+    if (refKey && (b.payments ?? []).some(q => q.method === p.method && q.ref.trim().toLowerCase() === refKey)) return { ok: false, reason: 'That reference is already on this bill.' }
     const amount = Math.round(Math.min(p.amount, tot - paid) * 100) / 100
     if (!(amount > 0)) return { ok: false, reason: 'Nothing left to pay' }
-    S().commit('Paid bill', b.billNo, `$${amount.toLocaleString()} ${p.method} ${p.ref}${amount < tot - paid ? ' (partial)' : ''}`, db => {
+    S().commit('Paid bill', b.billNo, `$${amount.toLocaleString()} ${p.method} ${p.ref}${amount < tot - paid - 0.005 ? ' (partial)' : ''}`, db => {
       const x = byId(db.bills, billId)!; x.payments = [...(x.payments ?? []), { id: uid('bp'), ...p, amount, by: S().session?.name }]
       if (x.payments.reduce((s, q) => s + q.amount, 0) >= tot - 0.005) { x.status = 'Paid'; x.paidOn = p.date }
     })
@@ -1328,7 +1337,13 @@ export const actions = {
     })
   },
   setCollections(invId: string, c: T.Invoice['collections']) { S().commit('Collections status', byId(S().db.invoices, invId)!.invNo, c, db => { byId(db.invoices, invId)!.collections = c }) },
-  addCost(c: Omit<T.JobCost, 'id'>) { S().commit('Posted job cost', `Job #${jobNo(S().db, c.jobId)}`, `${c.category} $${c.amount.toLocaleString()}`, db => { db.costs.push({ ...c, id: uid('co') }) }) },
+  addCost(c: Omit<T.JobCost, 'id'>) {
+    const amount = Math.round(Number(c.amount) * 100) / 100
+    if (!Number.isFinite(amount) || amount <= 0) return { ok: false as const, reason: 'Amount must be more than $0.' }
+    if (amount > BILL_MAX) return { ok: false as const, reason: `Amount over $${BILL_MAX.toLocaleString()} — check the number.` }
+    S().commit('Posted job cost', `Job #${jobNo(S().db, c.jobId)}`, `${c.category} $${amount.toLocaleString()}`, db => { db.costs.push({ ...c, amount, id: uid('co') }) })
+    return { ok: true as const }
+  },
 
   // ----- configs -----
   saveConfig(c: T.CraneConfig) { S().commit('Saved crane configuration', byId(S().db.equipment, c.craneId)!.unit, c.name, db => { db.configs = db.configs.filter(x => x.id !== c.id); db.configs.push(c) }) },
