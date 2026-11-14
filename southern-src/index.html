@@ -14,6 +14,47 @@
   </head>
   <body>
     <div id="root"></div>
+    <script>
+      (function () {
+        var shown = false, last = ''
+        function empty() {
+          var root = document.getElementById('root')
+          return !root || !(root.textContent || '').trim()
+        }
+        function show(msg) {
+          if (shown || !empty()) return
+          shown = true
+          var root = document.getElementById('root') || document.body
+          var box = document.createElement('div')
+          box.setAttribute('data-testid', 'boot-error')
+          box.style.cssText = 'font:16px system-ui,sans-serif;padding:32px;color:#ddd;background:#0b0d10;min-height:100vh;box-sizing:border-box'
+          var title = document.createElement('p')
+          title.style.margin = '0 0 12px'
+          title.textContent = 'Southern Command didn’t finish opening.'
+          var pre = document.createElement('pre')
+          pre.style.cssText = 'white-space:pre-wrap;font:13px ui-monospace,monospace;margin:0'
+          pre.textContent = msg || last || 'The page stayed blank.'
+          var btn = document.createElement('button')
+          btn.type = 'button'
+          btn.textContent = 'Reload'
+          btn.style.cssText = 'margin-top:16px;height:44px;padding:0 16px;border:0;border-radius:999px;font-weight:700;background:#e8eaed;color:#111'
+          btn.onclick = function () { location.reload() }
+          box.appendChild(title); box.appendChild(pre); box.appendChild(btn)
+          root.appendChild(box)
+        }
+        window.addEventListener('error', function (e) {
+          if (e.target && e.target !== window) return
+          last = (e && e.message) || (e.error && e.error.message) || 'Script error'
+          show(last)
+        })
+        window.addEventListener('unhandledrejection', function (e) {
+          var reason = e && e.reason
+          last = (reason && (reason.message || String(reason))) || 'Unhandled rejection'
+          show(last)
+        })
+        setTimeout(function () { if (empty()) show(last) }, 5000)
+      })()
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

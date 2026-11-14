@@ -19,11 +19,12 @@ export default defineConfig({
     trace: 'off',
     video: 'off',
     screenshot: 'off',
-    launchOptions: { executablePath: chrome, args: ['--no-sandbox', '--disable-dev-shm-usage'] },
   },
   projects: [
-    { name: 'desktop', use: { viewport: { width: 1400, height: 900 } } },
-    { name: 'phone', use: { ...devices['Pixel 7'] } },
+    { name: 'desktop', use: { browserName: 'chromium', viewport: { width: 1400, height: 900 }, launchOptions: { executablePath: chrome, args: ['--no-sandbox', '--disable-dev-shm-usage'] } } },
+    { name: 'phone', use: { ...devices['Pixel 7'], launchOptions: { executablePath: chrome, args: ['--no-sandbox', '--disable-dev-shm-usage'] } } },
+    { name: 'firefox', use: { browserName: 'firefox', viewport: { width: 1400, height: 900 } } },
+    { name: 'webkit', use: { browserName: 'webkit', viewport: { width: 1400, height: 900 } } },
   ],
   webServer: {
     command: 'npm run dev -- --host 127.0.0.1 --port 5173',
