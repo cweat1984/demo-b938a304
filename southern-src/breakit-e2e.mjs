@@ -84,7 +84,7 @@ const boot = async (browser, opts) => {
   const g = await ctx.newPage()
   await g.goto(base)
   await g.waitForSelector('[data-role=owner]')
-  await g.evaluate(() => window.__store.getState().signIn('guest', 'Demo role'))
+  await g.evaluate(() => { sessionStorage.setItem('sc-guest', 'signed-pass'); window.__store.getState().signIn('guest', 'Guest pass') })
   await g.waitForTimeout(400)
   const before = await g.evaluate(() => window.__store.getState().db.assignments.length)
   await a.evaluate((x) => {
