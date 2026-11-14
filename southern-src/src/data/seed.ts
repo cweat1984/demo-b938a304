@@ -8,6 +8,7 @@ import { seedRecon } from './seedRecon'
 import { seedMyInfo, seedCertShares } from './seedMyInfo'
 
 import { byIdS, DB_VERSION, BURDEN, PER_DIEM_RATES, TRAILER_DAY_COST, DVIR_ITEMS, DIVISIONS, BRANCHES, SITES, CUSTOMERS, CONTACT_NAMES, CRANES, DOWN_CRANES, FLEET, FIRST, LAST, LOCALS, emailFor, distMiles, requiredPositions } from './seedBase'
+import { ensurePayRules } from './payRules'
 import type { SiteRow } from './seedBase'
 export { DB_VERSION, BURDEN, PER_DIEM_RATES, TRAILER_DAY_COST, DVIR_ITEMS, DIVISIONS, BRANCHES, emailFor, distMiles, requiredPositions } from './seedBase'
 /** Main build: the full seed is generated locally, nothing extra to unlock (the guest-only build swaps this module). */
@@ -1032,9 +1033,9 @@ export function seed(): T.DB {
       startDate: st, endDate: addDays(st, days - 1), craneId: undefined, craneIds: undefined, rig: undefined, outside: undefined, trailerIds: [], extras: undefined, stage: 'Quote', status: 'Planned', dayRate: rate, invoiceNo: undefined, closedOut: undefined,
       quote: { revenue: rev, costBudget: Math.round(rev * (0.6 + (i % 4) * 0.03)), mobDemob: mob, quotedAt: q, salesId: tmpl.quote.salesId }, quoteSentAt: q + 'T15:00:00.000Z', quoteLost: { at: addDays(q, 4), reason: LOST_WHY[i % LOST_WHY.length] }, docs: [], notes: 'Lost quote (demo history).' })
   }
-  return {
+  return ensurePayRules({
     windSites,
     version: DB_VERSION, tenantId: 'tenant-slh', company: { id: 'tenant-slh', name: 'Southern Lifting & Hoisting', shortName: 'SLH', assistantName: 'Southern', phone: '(405) 555-0100', modules: { craneRigging: true } }, seededAt: new Date().toISOString(), employees, certs, equipment, configs, customers, sites, jobs, assignments, absences, travel, time, tickets, breakdowns, workOrders, items, checkouts, invLedger, pos, partsRequests, cycleCounts, timeRecs, infoChanges, certShares, sds, hires, notices, audit,
     craneVendors, contacts, clocks: [], costs, fuel, dvirs, history, divisions: DIVISIONS, branches: BRANCHES, vendors, bills, invoices, pto, hrRecords, incidents, talks, inspections,
-  }
+  })
 }

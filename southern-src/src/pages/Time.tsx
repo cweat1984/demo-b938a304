@@ -5,7 +5,8 @@ import { toast } from 'sonner'
 import { Check, Download, Flag, ChevronLeft, ChevronRight } from 'lucide-react'
 import type * as T from '../data/types'
 import { useStore, actions, scopeFor } from '../data/store'
-import { inScope, byId, fullName } from '../data/logic'
+import { inScope, byId, fullName, overtimeByEntry } from '../data/logic'
+import { payRulesOf, ruleBlurb, ruleFor } from '../data/payRules'
 import { cn, fmtDate, today, addDays, startOfWeek, downloadCsv, dow, money } from '../lib/util'
 import { PageHeader, Segmented, Badge, Button, Card, Empty, Avatar, confirmChoice } from '../components/ui'
 import { PER_DIEM_RATES } from '../data/seed'
@@ -29,6 +30,7 @@ export default function Time() {
   const shown = entries.filter(pick)
   const conflicts = useMemo(() => timeConflicts(entries, id => byId(db.jobs, id)?.jobNo ?? ''), [entries, db.jobs])
   const clean = shown.filter(t => t.status === 'Submitted' && !conflicts.has(t.id)), held = shown.filter(t => t.status === 'Submitted' && conflicts.has(t.id)).length
+  const slices = useMemo(() => overtimeByEntry(db), [db])
   const byEmp = new Map<string, T.TimeEntry[]>()
   shown.forEach(t => byEmp.set(t.employeeId, [...(byEmp.get(t.employeeId) ?? []), t]))
   const hrs = entries.reduce((s, t) => s + t.hours, 0)
@@ -38,23 +40,27 @@ export default function Time() {
   const toggle = (id: string) => { const n = new Set(sel); n.has(id) ? n.delete(id) : n.add(id); setSel(n) }
   const approve = (ids: string[]) => { actions.approveTime(ids); toast.success(`${ids.length} entries approved`, { description: 'Hours posted to job costing' }); setSel(new Set()) }
   /** Paychex Flex demo layout — one line per worker, per job, per pay component for the week's exported time.
-   *  Overtime is over 40 hours in the week (the Time screen's rule), applied in date order and charged to that day's job.
-   *  This is not a daily-after-10 rule; confirm with payroll before import if the company pays daily OT instead. */
+   *  Hours follow that person's pay rule (weekly or daily) plus any job/site double-time threshold. Each hour is in one bucket. */
   const paychexNow = () => {
     const session = useStore.getState().session!, auth = scopeFor(db, session.role, session.employeeId)
     const authBranches = auth.branchId === 'all' ? db.branches : db.branches.filter(b => b.id === auth.branchId)
     const done = db.time.filter(t => t.date >= wk && t.date <= end && t.status === 'Exported' && authBranches.some(b => b.id === byId(db.employees, t.employeeId)?.branchId))
     if (!done.length) { toast('Export the week first', { description: 'The Paychex file only carries locked (exported) time' }); return }
-    const per = new Map<string, { empId: string; reg: number; ot: number; pd: number; job: string }>(), wkH = new Map<string, number>()
-    for (const t of [...done].sort((x, y) => (x.date + x.start).localeCompare(y.date + y.start))) { const h0 = wkH.get(t.employeeId) ?? 0, reg = Math.max(0, Math.min(t.hours, 40 - h0)); wkH.set(t.employeeId, h0 + t.hours)
+    const slices = overtimeByEntry(db)
+    const per = new Map<string, { empId: string; reg: number; ot: number; otW: number; dt: number; dtW: number; pd: number; job: string }>()
+    for (const t of done) {
+      const s = slices.get(t.id) ?? { reg: t.hours, ot: 0, dt: 0, otWeight: 0, dtWeight: 0, otMult: 1.5, dtMult: 2 }
       const job = byId(db.jobs, t.jobId)?.jobNo ?? ''
       const key = `${t.employeeId}\t${job}`
-      const a = per.get(key) ?? { empId: t.employeeId, reg: 0, ot: 0, pd: 0, job }; a.reg += reg; a.ot += t.hours - reg; a.pd += t.perDiems.reduce((x, p) => x + PER_DIEM_RATES[p], 0); per.set(key, a) }
+      const a = per.get(key) ?? { empId: t.employeeId, reg: 0, ot: 0, otW: 0, dt: 0, dtW: 0, pd: 0, job }
+      a.reg += s.reg; a.ot += s.ot; a.otW += s.otWeight; a.dt += s.dt; a.dtW += s.dtWeight; a.pd += t.perDiems.reduce((x, p) => x + PER_DIEM_RATES[p], 0); per.set(key, a)
+    }
     const r2 = (n: number) => Math.round(n * 100) / 100, client = 'DEMO-CLIENT'
     const rows: (string | number)[][] = []
     per.forEach(a => { const e = byId(db.employees, a.empId)!; const rate = e.rate ?? 0
       if (a.reg > 0) rows.push([client, e.empNo, fullName(e), 'Hourly', r2(a.reg), rate, r2(a.reg * rate), end, a.job])
-      if (a.ot > 0) rows.push([client, e.empNo, fullName(e), 'Overtime', r2(a.ot), r2(rate * 1.5), r2(a.ot * rate * 1.5), end, a.job])
+      if (a.ot > 0) rows.push([client, e.empNo, fullName(e), 'Overtime', r2(a.ot), r2(rate * (a.otW / a.ot)), r2(a.otW * rate), end, a.job])
+      if (a.dt > 0) rows.push([client, e.empNo, fullName(e), 'Double time', r2(a.dt), r2(rate * (a.dtW / a.dt)), r2(a.dtW * rate), end, a.job])
       if (a.pd > 0) rows.push([client, e.empNo, fullName(e), 'Per Diem', '', '', r2(a.pd), end, a.job]) })
     rows.push(['DEMO — unverified', 'DEMO-CLIENT is a placeholder. Hourly, Overtime, and Per Diem are not a confirmed Paychex company mapping. Do not import into payroll until that mapping is confirmed.'])
     downloadCsv(`paychex-flex-${wk}.csv`, [['Client ID', 'Worker ID', 'Worker Name', 'Pay Component', 'Hours', 'Rate', 'Amount', 'Check Date / Period End', 'Job Number'], ...rows])
@@ -85,13 +91,11 @@ export default function Time() {
     // payable rows + flagged rows (held, clearly marked, not in the totals) so the file reconciles to the page header
     const pay = entriesX.filter(t => t.status === (again ? 'Exported' : 'Approved')), held = entriesX.filter(t => t.status === 'Flagged' || t.status === 'Submitted') // nothing silently dropped: unapproved rows are listed as held
     const pd = (t: T.TimeEntry) => t.perDiems.reduce((x, p) => x + PER_DIEM_RATES[p], 0)
-    // dive3 m7: REG / OT (over 40 h in the week, per person, in date order), rate and gross wages so the file loads into Paychex/ADP
-    const split = new Map<string, { reg: number; ot: number }>(), wkH = new Map<string, number>()
-    for (const t of [...pay].sort((x, y) => (x.date + x.start).localeCompare(y.date + y.start))) { const h0 = wkH.get(t.employeeId) ?? 0, reg = Math.max(0, Math.min(t.hours, 40 - h0)); split.set(t.id, { reg: Math.round(reg * 100) / 100, ot: Math.round((t.hours - reg) * 100) / 100 }); wkH.set(t.employeeId, h0 + t.hours) }
-    const gross = (t: T.TimeEntry) => { const e = byId(db.employees, t.employeeId), r = e?.rate ?? 0, sp = split.get(t.id) ?? { reg: t.hours, ot: 0 }; return Math.round((sp.reg * r + sp.ot * r * 1.5) * 100) / 100 }
-    const row = (t: T.TimeEntry, st: string) => { const e = byId(db.employees, t.employeeId)!; const sp = st === 'Pay' ? split.get(t.id) : undefined; return [e.empNo, fullName(e), t.date, t.activity, byId(db.jobs, t.jobId)?.jobNo ?? '', t.start, t.end, t.mealMin, t.hours, sp ? sp.reg : '', sp ? sp.ot : '', 0, e.rate ?? '', sp ? gross(t) : '', t.perDiems.join('+'), pd(t), st, t.note ?? ''] }
+    const slices = overtimeByEntry(db)
+    const gross = (t: T.TimeEntry) => { const e = byId(db.employees, t.employeeId), r = e?.rate ?? 0, sp = slices.get(t.id); return sp ? Math.round((sp.reg + sp.otWeight + sp.dtWeight) * r * 100) / 100 : 0 }
+    const row = (t: T.TimeEntry, st: string) => { const e = byId(db.employees, t.employeeId)!; const sp = st === 'Pay' ? slices.get(t.id) : undefined; return [e.empNo, fullName(e), t.date, t.activity, byId(db.jobs, t.jobId)?.jobNo ?? '', t.start, t.end, t.mealMin, t.hours, sp ? Math.round(sp.reg * 100) / 100 : '', sp ? Math.round(sp.ot * 100) / 100 : '', sp ? Math.round(sp.dt * 100) / 100 : '', e.rate ?? '', sp ? gross(t) : '', t.perDiems.join('+'), pd(t), st, t.note ?? ''] }
     const slug = scopeBranches.length === db.branches.length ? 'all-branches' : scopeBranches.map(b => b.code.toLowerCase()).join('-')
-    downloadCsv(`payroll-${wk}-${slug}${again ? '-copy' : ''}.csv`, [['Employee #', 'Name', 'Date', 'Activity', 'Job', 'Start', 'End', 'Meal', 'Hours', 'REG', 'OT (over 40/wk)', 'DT', 'Rate', 'Gross wages', 'Per diems', 'Per diem $', 'Status', 'Flag / note'], ...pay.map(t => row(t, 'Pay')), ...held.map(t => row(t, t.status === 'Flagged' ? 'FLAGGED - hold, do not pay' : 'HELD - not approved, do not pay')), ['TOTAL PAYABLE', '', '', '', '', '', '', '', Math.round(pay.reduce((s, t) => s + t.hours, 0) * 100) / 100, Math.round(pay.reduce((s, t) => s + (split.get(t.id)?.reg ?? 0), 0) * 100) / 100, Math.round(pay.reduce((s, t) => s + (split.get(t.id)?.ot ?? 0), 0) * 100) / 100, 0, '', Math.round(pay.reduce((s, t) => s + gross(t), 0) * 100) / 100, '', pay.reduce((s, t) => s + pd(t), 0), `${pay.length} entries`, held.length ? `${held.length} entries held for review (${Math.round(held.reduce((s, t) => s + t.hours, 0) * 100) / 100} h) — not exported` : ''], ['SCOPE', scopeLabel, `Week ${wk} to ${end}`, `Exported by ${session.name}`]])
+    downloadCsv(`payroll-${wk}-${slug}${again ? '-copy' : ''}.csv`, [['Employee #', 'Name', 'Date', 'Activity', 'Job', 'Start', 'End', 'Meal', 'Hours', 'REG', 'OT', 'DT', 'Rate', 'Gross wages', 'Per diems', 'Per diem $', 'Status', 'Flag / note'], ...pay.map(t => row(t, 'Pay')), ...held.map(t => row(t, t.status === 'Flagged' ? 'FLAGGED - hold, do not pay' : 'HELD - not approved, do not pay')), ['TOTAL PAYABLE', '', '', '', '', '', '', '', Math.round(pay.reduce((s, t) => s + t.hours, 0) * 100) / 100, Math.round(pay.reduce((s, t) => s + (slices.get(t.id)?.reg ?? 0), 0) * 100) / 100, Math.round(pay.reduce((s, t) => s + (slices.get(t.id)?.ot ?? 0), 0) * 100) / 100, Math.round(pay.reduce((s, t) => s + (slices.get(t.id)?.dt ?? 0), 0) * 100) / 100, '', Math.round(pay.reduce((s, t) => s + gross(t), 0) * 100) / 100, '', pay.reduce((s, t) => s + pd(t), 0), `${pay.length} entries`, held.length ? `${held.length} entries held for review (${Math.round(held.reduce((s, t) => s + t.hours, 0) * 100) / 100} h) — not exported` : ''], ['SCOPE', scopeLabel, `Week ${wk} to ${end}`, `Exported by ${session.name}`]])
     if (again) { toast.success('Exported batch downloaded again', { description: 'Same locked records — nothing re-sent' }); return }
     actions.exportTime(ids); toast.success(`${ids.length} entries exported · ${scopeLabel}`, { description: `Records locked · payroll CSV downloaded${held.length ? ` · ${held.length} held for review (${Math.round(held.reduce((s, t) => s + t.hours, 0) * 10) / 10} h) — not exported` : ''}` })
   }
@@ -109,9 +113,9 @@ export default function Time() {
         {tab === 'review' && canApprove && <div className="ml-auto flex gap-2 sticky top-20 z-20">{sel.size > 0 && <Button variant="ok" icon={<Check className="size-4" />} onClick={() => approve([...sel])}>Approve {sel.size}</Button>}<Button data-testid="approve-clean" title={held ? `${held} overlapping / over-${16} h entr${held === 1 ? 'y is' : 'ies are'} held for review` : undefined} onClick={() => { if (!clean.length) { toast('Nothing clean to approve', { description: held ? `${held} held — overlaps or over 16 h` : undefined }); return } approve(clean.map(t => t.id)); if (held) toast.warning(`${held} held back`, { description: 'Overlapping times or over 16 h in a day — review them one by one' }) }}>Approve all clean{held ? ` · ${held} held` : ''}</Button></div>}
       </div>
       {!shown.length ? <Empty title="All caught up" body="Nothing in this view for the week." /> : <div className="flex flex-col gap-3">
-        {[...byEmp.entries()].sort((a, b) => Number(b[1].some(t => t.status === 'Flagged')) - Number(a[1].some(t => t.status === 'Flagged')) || fullName(byId(db.employees, a[0])).localeCompare(fullName(byId(db.employees, b[0])))).map(([eid, list]) => { const e = byId(db.employees, eid)!; const wkHrs = entries.filter(t => t.employeeId === eid).reduce((s, t) => s + t.hours, 0); const hasFlag = list.some(t => t.status === 'Flagged' || (t.status === 'Submitted' && conflicts.has(t.id))); const isOpen = hasFlag !== expanded.has(eid); return (
+        {[...byEmp.entries()].sort((a, b) => Number(b[1].some(t => t.status === 'Flagged')) - Number(a[1].some(t => t.status === 'Flagged')) || fullName(byId(db.employees, a[0])).localeCompare(fullName(byId(db.employees, b[0])))).map(([eid, list]) => { const e = byId(db.employees, eid)!; const mine = entries.filter(t => t.employeeId === eid); const wkHrs = mine.reduce((s, t) => s + t.hours, 0); const otH = mine.reduce((s, t) => s + (slices.get(t.id)?.ot ?? 0) + (slices.get(t.id)?.dt ?? 0), 0); const rule = ruleFor(payRulesOf(db), e); const hasFlag = list.some(t => t.status === 'Flagged' || (t.status === 'Submitted' && conflicts.has(t.id))); const isOpen = hasFlag !== expanded.has(eid); return (
           <Card key={eid} pad={false} className="overflow-hidden">
-            <div className="flex items-center gap-3 px-5 py-3 border-b hairline cursor-pointer" onClick={ev => { if ((ev.target as HTMLElement).closest('a,button[data-ref],.ref-link')) return; const n = new Set(expanded); n.has(eid) ? n.delete(eid) : n.add(eid); setExpanded(n) }} data-testid="time-emp"><ChevronRight className={cn('size-4 text-muted transition shrink-0', isOpen && 'rotate-90')} /><Avatar name={fullName(e)} size={32} /><div className="flex-1"><div className="font-semibold"><EmpRef id={e.id} /></div><div className="text-xs text-muted">{e.craft} · #{e.empNo}</div></div><div className="text-right"><div className="font-semibold num">{wkHrs.toFixed(1)}h</div>{wkHrs > 40 && <div className="text-[11px] text-warn font-semibold">{(wkHrs - 40).toFixed(1)}h OT</div>}</div></div>
+            <div className="flex items-center gap-3 px-5 py-3 border-b hairline cursor-pointer" onClick={ev => { if ((ev.target as HTMLElement).closest('a,button[data-ref],.ref-link')) return; const n = new Set(expanded); n.has(eid) ? n.delete(eid) : n.add(eid); setExpanded(n) }} data-testid="time-emp"><ChevronRight className={cn('size-4 text-muted transition shrink-0', isOpen && 'rotate-90')} /><Avatar name={fullName(e)} size={32} /><div className="flex-1"><div className="font-semibold"><EmpRef id={e.id} /></div><div className="text-xs text-muted">{e.craft} · #{e.empNo} · <span data-testid="time-rule">{ruleBlurb(rule)}</span></div></div><div className="text-right"><div className="font-semibold num">{wkHrs.toFixed(1)}h</div>{otH > 0.05 && <div className="text-[11px] text-warn font-semibold" data-testid="time-ot">{otH.toFixed(1)}h OT</div>}</div></div>
             {!isOpen && <div className="px-5 py-2 text-xs text-muted">{list.length} entr{list.length === 1 ? 'y' : 'ies'} · {[...new Set(list.map(t => t.jobId).filter(Boolean))].map((id, i) => <span key={id}>{i ? ', ' : ''}<JobRef id={id} /></span>)}{hasFlag ? ' · flagged' : ''} — tap to expand</div>}
             {isOpen && list.sort((a, b) => a.date.localeCompare(b.date)).map(t => (
               <div key={t.id} className={cn('flex items-center gap-3 px-5 py-2.5 border-b hairline last:border-0 text-sm', t.status === 'Flagged' && 'bg-bad/[.05]')}>

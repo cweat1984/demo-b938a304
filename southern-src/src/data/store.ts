@@ -12,7 +12,8 @@ import { scrubDb } from '../guest/guard'
 import { localRepository } from './repo'
 import { uid, today, addDays, range, hoursBetween, diffDays, csvHooks, dateOf } from '../lib/util'
 import { realHours, elapsedHours, entriesOverlap, isoOffset, localDate, hhmmOf, deviceTz, MAX_SHIFT_H } from './timemath'
-import { byId, fullName, requiredPositions, isLive, type OrgFilter } from './logic'
+import { byId, fullName, requiredPositions, isLive, billedLaborLines, type OrgFilter } from './logic'
+import { cleanRule, WEEKLY_RULE_ID } from './payRules'
 import { jobCranes, firstClash } from './rig'
 import { emailFor, seed as freshSeed } from './seed'
 import { inspectionDays } from './certValidity'
@@ -471,6 +472,22 @@ export const actions = {
     S().commit('Moved job in pipeline', `Job #${j.jobNo}`, `${j.stage} → ${stage}`, db => { byId(db.jobs, jobId)!.stage = stage })
   },
   addCompanyDoc(d: NonNullable<T.DB['companyDocs']>[number]) { S().commit('Uploaded company document', d.name, d.kind, db => { db.companyDocs = [d, ...(db.companyDocs ?? [])] }) },
+  savePayRule(rule: T.PayRule) {
+    const clean = cleanRule(rule)
+    if (!clean.id) return
+    S().commit('Updated pay rule', clean.name, `${clean.kind} · overtime after ${clean.otAfter}`, db => {
+      const list = db.payRules ? [...db.payRules] : []
+      const i = list.findIndex(r => r.id === clean.id)
+      if (i >= 0) list[i] = clean
+      else list.push(clean)
+      db.payRules = list
+    })
+  },
+  updateSite(siteId: string, patch: Partial<T.Site>) {
+    const s = byId(S().db.sites, siteId)
+    if (!s) return
+    S().commit('Updated site', s.name, Object.keys(patch).join(', '), db => { Object.assign(byId(db.sites, siteId)!, patch) })
+  },
   updateJob(jobId: string, patch: Partial<T.Job>, what = 'Edited job') {
     const j = byId(S().db.jobs, jobId)!
     const show = (v: unknown) => v == null ? '—' : typeof v === 'object' ? (Array.isArray(v) ? `${v.length} item${v.length === 1 ? '' : 's'}` : Object.entries(v as Record<string, unknown>).filter(([, x]) => typeof x !== 'object').map(([k, x]) => `${k} ${x}`).join(' · ').slice(0, 80)) : String(v)
@@ -1151,7 +1168,7 @@ export const actions = {
     const newId = uid('emp')
     S().commit('Activated employee', `${h.first} ${h.last}`, `${h.empNo} moved to active roster${opt?.noDrive ? ' · non-driving until DOT cleared' : ''}`, db => {
       db.hires = db.hires.filter(x => x.id !== id)
-      db.employees.push({ ...(opt?.noDrive ? { noDrive: opt.noDrive } : {}), id: newId, empNo: h.empNo, first: h.first, last: h.last, craft: h.craft, phone: h.phone, email: h.email, supervisorId: h.supervisorId, status: 'Active', perDiemBlocked: [], hireDate: h.start, city: byId(db.branches, h.branchId ?? 'br-okc')?.city ?? 'Oklahoma City', rate: h.rate ?? 28, divisionId: h.divisionId ?? 'div-slh', branchId: h.branchId ?? 'br-okc' })
+      db.employees.push({ ...(opt?.noDrive ? { noDrive: opt.noDrive } : {}), id: newId, empNo: h.empNo, first: h.first, last: h.last, craft: h.craft, phone: h.phone, email: h.email, supervisorId: h.supervisorId, status: 'Active', perDiemBlocked: [], payRuleId: WEEKLY_RULE_ID, hireDate: h.start, city: byId(db.branches, h.branchId ?? 'br-okc')?.city ?? 'Oklahoma City', rate: h.rate ?? 28, divisionId: h.divisionId ?? 'div-slh', branchId: h.branchId ?? 'br-okc' })
       for (const c of opt?.certs ?? []) db.certs.push({ id: uid('cert'), employeeId: newId, type: c.type as T.CertType, credentialNo: 'TRAIN', provider: 'Orientation', issued: today(), expires: addDays(today(), 365), verified: 'Verified' })
     })
     return newId
@@ -1248,7 +1265,7 @@ export const actions = {
     const signedDates = new Set(tickets.map(t => t.date))
     const signedDays = signedDates.size
     const days = signedDays || Math.min(diffDays(j.endDate, j.startDate) + 1, Math.max(1, diffDays(today(), j.startDate) + 1))
-    return [{ description: `${j.craneId ? 'Crane & crew' : 'Crew & equipment'} day rate — ${days} days (${signedDays ? `${signedDays} signed ticket days` : 'no signed tickets — verify'})`, qty: days, rate: j.dayRate }, ...(j.quote.mobDemob ? [{ description: 'Mobilization / demobilization', qty: 1, rate: j.quote.mobDemob }] : []), ...customerExtraLines(j, undefined, signedDays ? signedDates : undefined)]
+    return [{ description: `${j.craneId ? 'Crane & crew' : 'Crew & equipment'} day rate — ${days} days (${signedDays ? `${signedDays} signed ticket days` : 'no signed tickets — verify'})`, qty: days, rate: j.dayRate }, ...(j.quote.mobDemob ? [{ description: 'Mobilization / demobilization', qty: 1, rate: j.quote.mobDemob }] : []), ...customerExtraLines(j, undefined, signedDays ? signedDates : undefined), ...billedLaborLines(db0, j)]
   },
   createInvoice(jobId: string, o?: { lines?: T.Invoice['lines']; customerPo?: string }) {
     const db0 = S().db

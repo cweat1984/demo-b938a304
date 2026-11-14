@@ -9,6 +9,7 @@ import { ChevronLeft, ChevronRight, Siren, Wrench, CheckCircle2, Lock, CalendarP
 import type * as T from '../data/types'
 import { useStore, actions } from '../data/store'
 import { byId, fullName, eqLabel, certBand, workStatus, serviceStatus, pingAgeMin, craneBookings, jobsOn, customerOf, siteOf, agingBucket, craneLeague, COST_CATS, isLive } from '../data/logic'
+import { payRulesOf, ruleBlurb, ruleFor } from '../data/payRules'
 import { today, fmtDate, fmtTs, timeAgo, money, money2, addDays, cn, range, dow } from '../lib/util'
 import { EmpInfoPanel } from './MyInfo'
 import { CertShareLog } from './CertSend'
@@ -179,6 +180,7 @@ function EmployeeView({ e }: { e: T.Employee }) {
         <Kv k="Per diem" v={(['Semi Truck', 'Hotel', 'Daily Truck'] as T.PerDiem[]).map(p => <span key={p} className={cn('ml-2', e.perDiemBlocked.includes(p) && 'line-through text-faint')}>{p}</span>)} />
         <Kv k="Hired" v={fmtDate(e.hireDate, { month: 'short', year: 'numeric' })} />
         {['hr', 'owner', 'payroll'].includes(role) && <Kv k="Pay rate" v={<span className="num">${e.rate}/hr</span>} />}
+        {['hr', 'owner', 'payroll'].includes(role) && <Kv k="Pay rule" v={<span data-testid="emp-pay-rule-label">{ruleBlurb(ruleFor(payRulesOf(db), e))}</span>} />}
       </div>
       <EmpInfoPanel e={e} />
       {['hr', 'owner', 'safety', 'ops', 'dispatch', 'branch'].includes(role) && <div className="mt-4"><div className="label mb-1.5">Cert sends</div><CertShareLog empId={e.id} /></div>}
