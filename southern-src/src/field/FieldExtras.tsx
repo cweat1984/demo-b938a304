@@ -66,7 +66,7 @@ const KINDS: { k: T.Incident['kind']; label: string }[] = [{ k: 'Near Miss', lab
 export function IncidentForm({ onDone }: { onDone: () => void }) {
   const { db, me, current } = useMe()
   const [kind, setKind] = useState<T.Incident['kind']>('Near Miss')
-  const [who, setWho] = useState(me.id)
+  const [who, setWho] = useState('')
   const online = useStore(s => s.ui.online)
   const [desc, setDesc] = useState(''), [stop, setStop] = useState(false), [refs, setRefs] = useState<string[]>([]), [upl, setUpl] = useState(false), [busy, setBusy] = useState(false)
   // field fixes: real GPS only when the phone shares it — never claim a location we don't have
@@ -77,14 +77,14 @@ export function IncidentForm({ onDone }: { onDone: () => void }) {
   const send = () => {
     if (busy) return; setBusy(true)
     const gps = loc && loc !== 'off' ? loc : undefined
-    actions.addIncident({ date: today(), jobId: current?.id, employeeId: who, kind, severity: stop || kind === 'First Aid' ? 'High' : 'Medium', description: `${stop ? 'STOP WORK called. ' : ''}${desc.trim()}`, status: 'Reported', reportedBy: fullName(me), photos: refs.length, photoRefs: refs, ...(gps ?? {}) })
+    actions.addIncident({ date: today(), jobId: current?.id, employeeId: who || undefined, kind, severity: stop || kind === 'First Aid' ? 'High' : 'Medium', description: `${stop ? 'STOP WORK called. ' : ''}${desc.trim()}`, status: 'Reported', reportedBy: fullName(me), photos: refs.length, photoRefs: refs, ...(gps ?? {}) })
     if (!navigator.onLine || online === false) toast.warning('Saved on this phone — not sent yet', { description: `It goes to Safety the moment you have signal.${sup?.phone ? ` If someone is hurt, call ${sup.first} now: ${sup.phone}.` : ' If someone is hurt, call your supervisor now.'}`, duration: 12000 })
     else toast.success('Report sent', { description: `Safety${safety ? ` (${safety.first})` : ''}${sup ? ` and ${sup.first}` : ''} have it now. Thank you for speaking up.` }); onDone()
   }
   return <div className="flex flex-col gap-4 pb-8" data-testid="incident-form">
     <div className="rounded-2xl bg-bad/12 text-bad p-3 text-sm font-semibold">If someone is badly hurt, call 911 first.</div>
     <div className="grid grid-cols-2 gap-2">{KINDS.map(o => <button key={o.k} onClick={() => setKind(o.k)} data-testid={`inc-${o.k.replace(/\s/g, '')}`} className={cn('min-h-[48px] rounded-2xl px-3 font-semibold text-sm border', kind === o.k ? 'bg-bad-solid text-white border-transparent' : 'bg-surface-2 border-line')}>{o.label}</button>)}</div>
-    <Field label="Who was hurt?"><select className="input" data-testid="inc-who" value={who} onChange={e => setWho(e.target.value)}>{db.employees.filter(e => e.status === 'Active').sort((a, b) => a.last.localeCompare(b.last)).map(e => <option key={e.id} value={e.id}>{fullName(e)} · {e.craft}</option>)}</select></Field>
+    <Field label="Who was hurt?"><select className="input" data-testid="inc-who" value={who} onChange={e => setWho(e.target.value)}><option value="">Nobody hurt</option>{db.employees.filter(e => e.status === 'Active').sort((a, b) => a.last.localeCompare(b.last)).map(e => <option key={e.id} value={e.id}>{fullName(e)} · {e.craft}</option>)}</select></Field>
     <Field label="What happened? (talk-to-text works)"><textarea className="input min-h-[110px]" value={desc} onChange={e => setDesc(e.target.value)} placeholder="Where, who, what you saw" data-testid="inc-desc" /></Field>
     <div className="flex gap-2"><label className="flex-1 min-h-[48px] rounded-2xl bg-surface-2 font-semibold inline-flex items-center justify-center gap-2 cursor-pointer"><Camera className="size-5" />{upl ? 'Saving…' : refs.length ? `${refs.length} photo${refs.length > 1 ? 's' : ''}` : 'Add photo'}<input type="file" accept="image/*" capture="environment" multiple className="hidden" data-testid="inc-photo" onChange={e => { const fs = [...(e.target.files ?? [])]; e.target.value = ''; if (!fs.length) return; setUpl(true); savePhotos(fs, 'inc', 6).then(r => setRefs(p => [...p, ...r])).catch(err => toast.error(String(err.message ?? err))).finally(() => setUpl(false)) }} /></label>
       <button className={cn('flex-1 min-h-[48px] rounded-2xl font-semibold border', stop ? 'bg-bad/15 border-bad text-bad' : 'border-line')} onClick={() => setStop(!stop)} data-testid="inc-stop">{stop ? '✓ Stop work called' : 'Stop work?'}</button></div>

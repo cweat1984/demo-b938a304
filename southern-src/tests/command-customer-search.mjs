@@ -17,7 +17,7 @@ const cranes = await page.evaluate(() => {
   const text = document.body.innerText
   const m = text.match(/(\d+) of (\d+) cranes on a job/)
   const db = window.__store.getState().db
-  const today = new Date().toISOString().slice(0, 10)
+  const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Chicago' })
   const live = db.jobs.filter(j => j.stage !== 'Quote' && j.stage !== 'Awarded' && j.startDate <= today && j.endDate >= today)
   const ids = new Set()
   for (const j of live) {
