@@ -826,7 +826,8 @@ export function seed(): T.DB {
   const talks: T.SafetyTalk[] = []
   jobs.filter(j => live(j) && between(T0, j.startDate, j.endDate)).slice(0, 14).forEach((j, i) => {
     const crew = assignments.filter(a => a.jobId === j.id && a.date === T0).map(a => a.employeeId)
-    talks.push({ id: `jsa-${i + 1}`, kind: 'JSA', title: `Daily JSA — Job #${j.jobNo}`, jobId: j.id, date: T0, leaderId: j.supervisorId ?? crew[0] ?? cale.id, attendeeIds: crew, hazards: ['Suspended loads', 'Wind', 'Pinch points', 'Overhead power lines'].slice(0, r.int(2, 4)), controls: ['Exclusion zone barricaded', 'Wind limits reviewed', 'Tag lines on every pick', 'Spotter assigned'].slice(0, r.int(2, 4)), signed: i % 4 !== 3 && j.jobNo !== '10125' })
+    const signed = i % 4 !== 3 && j.jobNo !== '10125'
+    talks.push({ id: `jsa-${i + 1}`, kind: 'JSA', title: `Daily JSA — Job #${j.jobNo}`, jobId: j.id, date: T0, leaderId: j.supervisorId ?? crew[0] ?? cale.id, attendeeIds: signed ? crew : [], hazards: ['Suspended loads', 'Wind', 'Pinch points', 'Overhead power lines'].slice(0, r.int(2, 4)), controls: ['Exclusion zone barricaded', 'Wind limits reviewed', 'Tag lines on every pick', 'Spotter assigned'].slice(0, r.int(2, 4)), signed })
   })
   ;['Hand protection & pinch points', 'Heat stress — hydration plan', 'Working near power lines (OSHA 1926.1408)', 'Pre-trip inspections save lives'].forEach((t, i) => talks.push({ id: `tbt-${i + 1}`, kind: 'Toolbox Talk', title: t, date: addDays(T0, -i * 7 - 1), leaderId: cale.id, attendeeIds: r.shuffle(field).slice(0, r.int(12, 30)).map(e => e.id), hazards: [], controls: [], signed: true }))
   const inspections: T.Inspection[] = []

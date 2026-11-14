@@ -155,11 +155,13 @@ test('an unsigned JSA is not already signed by the whole crew', async ({ page })
   await page.waitForFunction(() => (window as unknown as { __store?: { getState: () => { ready: boolean } } }).__store?.getState?.().ready === true)
   const talk = await page.evaluate((today) => {
     const db = (window as unknown as { __store: { getState: () => { db: { talks: { id: string; kind: string; title: string; date: string; jobId?: string; signed: boolean; attendeeIds: string[] }[]; assignments: { employeeId: string; jobId: string; date: string }[]; employees: { id: string; status: string }[] }; signIn: (r: string, m: string, id?: string) => void } } }).__store.getState()
-    const t = db.db.talks.find(t => t.kind === 'JSA' && t.date === today && t.signed === false && t.attendeeIds.length > 0)
+    const t = db.db.talks.find(t => t.kind === 'JSA' && t.date === today && t.signed === false)
     if (!t) return null
     const crew = [...new Set(db.db.assignments.filter(a => a.date === t.date && a.jobId === t.jobId).map(a => a.employeeId))].filter(id => db.db.employees.find(e => e.id === id)?.status !== 'Inactive')
     const miss = crew.filter(id => !t.attendeeIds.includes(id))
-    db.signIn('field', 'Demo role', t.attendeeIds[0])
+    const who = miss[0]
+    if (!who) return null
+    db.signIn('field', 'Demo role', who)
     return { title: t.title, signed: t.signed, label: `${t.attendeeIds.length} of ${new Set([...crew, ...t.attendeeIds]).size} signed`, miss: miss.length }
   }, chicagoToday())
   expect(talk, 'seed has an unsigned JSA today').toBeTruthy()
