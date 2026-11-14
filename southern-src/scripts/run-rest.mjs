@@ -9,7 +9,7 @@ import path from 'node:path'
 const root = path.resolve(import.meta.dirname, '..')
 const outDir = process.env.E2E_OUT || '/tmp/e2e-rest'
 const port = process.env.PORT || '4174'
-const base = `http://127.0.0.1:${port}/`
+const base = `http://localhost:${port}/`
 const limitMs = Number(process.env.E2E_LIMIT_MS || 8 * 60 * 1000)
 fs.mkdirSync(outDir, { recursive: true })
 

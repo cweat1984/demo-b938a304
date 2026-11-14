@@ -23,14 +23,15 @@ export default function Messages() {
   useEffect(() => { if (chat) useB4.getState().read(chat.id); end.current?.scrollIntoView({ block: 'end' }) }, [chat?.id, chat?.msgs.length])
   const at = text.match(/@(\w*)$/)
   const sugg = at && chat ? chat.members.filter(n => n !== me && n.toLowerCase().startsWith(at[1].toLowerCase())).slice(0, 5) : []
-  const people = useMemo(() => db.employees.filter(e => e.status === 'Active').slice(0, 40).map(e => `${e.first} ${e.last}`), [db.employees])
+  const people = useMemo(() => db.employees.filter(e => e.status === 'Active').map(e => `${e.first} ${e.last}`), [db.employees])
   const [dmPick, setDmPick] = useState(false)
+  const [dmQ, setDmQ] = useState('')
   const send = () => { if (!chat || (!text.trim() && !photo)) return; useB4.getState().send(chat.id, { from: me, text: text.trim(), photo }); setText(''); setPhoto(undefined) }
   return <div className="flex flex-col gap-5" data-testid="messages">
     <PageHeader eyebrow="Office" title="Messages & alerts" sub="A chat for every job, DMs, photos and @mentions — plus the alerts that matter." />
     <div className="grid lg:grid-cols-[260px_minmax(0,1fr)] 2xl:grid-cols-[300px_minmax(0,1fr)_320px] gap-4 items-start [&>*]:min-w-0">
       <Card pad={false}><div className="px-4 py-3 border-b hairline flex items-center"><span className="font-semibold flex-1">Chats</span><Button size="sm" icon={<Plus className="size-3.5" />} onClick={() => setDmPick(!dmPick)} data-testid="dm-new">DM</Button></div>
-        {dmPick && <div className="p-2 border-b hairline max-h-48 overflow-auto">{people.filter(p => p !== me).map(p => <button key={p} data-testid="dm-person" onClick={() => { setCid(useB4.getState().openDm(me, p)); setDmPick(false) }} className="w-full text-left px-2 py-1.5 text-sm rounded-lg hover:bg-surface-2">{p}</button>)}</div>}
+        {dmPick && <div className="p-2 border-b hairline"><input data-testid="dm-search" value={dmQ} onChange={e => setDmQ(e.target.value)} placeholder="Search people" className="input mb-2 h-10" /><div className="max-h-48 overflow-auto">{people.filter(p => p !== me && p.toLowerCase().includes(dmQ.trim().toLowerCase())).map(p => <button key={p} data-testid="dm-person" onClick={() => { setCid(useB4.getState().openDm(me, p)); setDmPick(false); setDmQ('') }} className="w-full text-left px-2 py-1.5 text-sm rounded-lg hover:bg-surface-2">{p}</button>)}</div></div>}
         <div className="max-h-[620px] overflow-auto">{chats.map(c => { const unread = c.msgs.length - c.lastRead; const last = c.msgs[c.msgs.length - 1]
           return <button key={c.id} data-testid="chat-item" onClick={() => setCid(c.id)} className={cn('w-full text-left px-4 py-3 flex gap-3 hover:bg-surface-2 border-b hairline', chat?.id === c.id && 'bg-surface-2')}>
             <span className="size-9 rounded-xl bg-surface-3 grid place-items-center shrink-0">{c.kind === 'job' ? <Hash className="size-4" /> : <User className="size-4" />}</span>

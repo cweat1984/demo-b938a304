@@ -58,11 +58,14 @@ export default function Dispatch() {
     }
     const from = d.fromJobId ? byId(db.jobs, d.fromJobId) : undefined
     const other = !from ? db.assignments.find(a => a.employeeId === e.id && a.date === date && a.jobId !== job.id) : undefined
+    const later = !from ? db.assignments.find(a => a.employeeId === e.id && a.date > date && a.date <= job.endDate && a.jobId !== job.id) : undefined
     const removing = from ?? (other ? byId(db.jobs, other.jobId) : undefined)
+    const laterJob = later ? byId(db.jobs, later.jobId) : undefined
     const r = await confirmChoice(
       removing ? `Move ${fullName(e)}?` : `Assign ${fullName(e)} as ${pos}?`,
       <div className="flex flex-col gap-2">
         {removing && <div>This removes {e.first} from <b className="text-ink">Job #{removing.jobNo} · {customerOf(db, removing).name}</b>. Dispatch must confirm.</div>}
+        {laterJob && <div>Already on Job #{laterJob.jobNo} on {fmtDate(later!.date)}. Rest of job leaves that day alone.</div>}
         <div>To <b className="text-ink">Job #{job.jobNo} · {customerOf(db, job).name}</b> ({siteOf(db, job).city}).</div>
         {(() => { const b = byId(db.branches, e.branchId); const st = siteOf(db, job); if (!b) return null; const mi = Math.round(distMiles([b.lat, b.lng], [st.lat, st.lng]) * 1.2); return <div className={cn('rounded-xl px-3 py-2 text-xs', mi > 75 ? 'bg-warn/10 text-warn' : 'bg-surface-2 text-muted')}>Home branch {b.code} · {mi} mi to site{mi > 150 ? ' · needs Hotel per diem + travel day' : mi > 75 ? ' · Hotel per diem' : mi > 40 ? ' · daily truck' : ' · local'}</div> })()}
         {el.warns.map(w => <div key={w} className="text-warn">⚠ {w}</div>)}
@@ -307,6 +310,7 @@ function CranePicker({ job, date, onClose }: { job: T.Job | null; date: string; 
     // dive3 dispatch m9: ONE question for all of the crane's permanent crew who are busy elsewhere
     const busy: { e: T.Employee; a: T.Assignment }[] = []
     for (const e of home) {
+      if (e.ssHold) continue // same rule as assign: a hold stays off the board
       const elsewhere = db.assignments.find(a => a.employeeId === e.id && a.date === date && a.jobId !== job.id)
       if (!elsewhere) decisions.push({ empId: e.id, position: defaultPosition(e), decision: 'move' }); else busy.push({ e, a: elsewhere })
     }
@@ -403,7 +407,7 @@ function MoreCranes({ job }: { job: T.Job }) {
   const extra = jobCranes(job).filter(c => c !== job.craneId)
   if (!extra.length) return null
   return <div className="mt-1.5" data-testid="more-cranes">
-    <span role="button" tabIndex={0} data-testid="more-cranes-toggle" onClick={e => { e.stopPropagation(); setShow(!show) }} onKeyDown={e => { if (e.key === 'Enter') { e.stopPropagation(); setShow(!show) } }} className="inline-flex items-center h-7 pointer-coarse:h-[44px] px-2.5 rounded-full bg-surface-2 text-xs font-semibold cursor-pointer">+{extra.length} crane{extra.length > 1 ? 's' : ''} {show ? '▴' : '▾'}</span>
+    <span role="button" tabIndex={0} data-testid="more-cranes-toggle" onClick={e => { e.stopPropagation(); setShow(!show) }} onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); setShow(!show) } }} className="inline-flex items-center h-7 pointer-coarse:h-[44px] px-2.5 rounded-full bg-surface-2 text-xs font-semibold cursor-pointer">+{extra.length} crane{extra.length > 1 ? 's' : ''} {show ? '▴' : '▾'}</span>
     {show && <div className="flex flex-wrap gap-1 mt-1.5" data-testid="more-cranes-list">{extra.map(id => { const e = byId(db.equipment, id); return <span key={id} role="button" tabIndex={0} data-testid="more-crane" onClick={ev => { ev.stopPropagation(); open({ type: 'equipment', id }) }} className="inline-flex items-center h-7 pointer-coarse:h-10 px-2.5 rounded-full border hairline text-xs font-semibold num cursor-pointer">{e?.unit ?? '—'} <span className="ml-1 text-muted font-normal">{e?.capacity}t</span></span> })}</div>}
   </div>
 }

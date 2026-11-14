@@ -71,7 +71,7 @@ await wk.close()
     for (const bt of (await g.locator('main button:visible').all()).slice(0, 12)) {
       const b0 = await snap(); await bt.click({ timeout: 300, noWaitAfter: true }).catch(() => {}); clicks++; await g.waitForTimeout(250)
       if (await snap() !== b0) changed.push(k + ':' + (((await bt.textContent().catch(() => '')) || '').trim().slice(0, 30)))
-      await g.keyboard.press('Escape'); if (await g.evaluate(() => window.__store.getState().ui.page) !== k) await g.evaluate(k => window.__store.getState().go(k), k)
+      await g.keyboard.press('Escape'); const here = await g.evaluate(() => window.__store?.getState?.().ui.page ?? null).catch(() => null); if (here === null) { await g.goBack().catch(() => {}); await g.waitForTimeout(400) } else if (here !== k) await g.evaluate(k => window.__store.getState().go(k), k)
     }
   }
   ok(changed.length === 0 && (await snap()) === before, `ops guest: ${clicks} clicks across permits/pickup/tickets/moves/weather/rigging/shop/site library saved nothing ${changed.slice(0, 4).join(' | ')}`)

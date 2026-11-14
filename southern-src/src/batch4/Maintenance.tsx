@@ -4,7 +4,7 @@ import { toast } from 'sonner'
 import { PageHeader, Card, Button, Badge, Segmented } from '../components/ui'
 import { useStore } from '../data/store'
 import { cn, today, iso, fmtDate } from '../lib/util'
-import { useB4, pmFor, annualDue, ragOf, CHECKLISTS, defectToWorkOrder, type InspKind, type Inspection, type RAG } from './b4store'
+import { useB4, pmFor, annualDue, ragOf, CHECKLISTS, defectToWorkOrder, certifyAnnual, type InspKind, type Inspection, type RAG } from './b4store'
 
 const dot: Record<RAG, string> = { red: 'bg-bad', amber: 'bg-warn', green: 'bg-ok-solid' }
 const readFile = (f: File) => new Promise<string>(r => { const fr = new FileReader(); fr.onload = () => r(fr.result as string); fr.readAsDataURL(f) })
@@ -38,6 +38,7 @@ export function InspectionForm({ unitId, kind: k0 = 'Daily', onDone }: { unitId:
       const defects = items.filter(x => x.ok === false)
       const rec: Inspection = { id: 'in-' + Math.random().toString(36).slice(2, 7), unitId, kind, at: new Date().toISOString(), by: kind !== 'Daily' ? `${inspSig.trim()} (cert ${cert.trim()})` : who, items: items.map(x => x.ok === false ? { ...x, woId: defectToWorkOrder(unitId, x.k, x.note, kind) } : x) }
       useB4.getState().saveInspection(rec)
+      if (kind === 'Annual' && !defects.length) certifyAnnual(unitId)
       toast.success(defects.length ? `${kind} inspection saved — ${defects.length} defect(s) sent to Shop as work orders` : `${kind} inspection passed`, { description: defects.length ? rec.items.filter(x => x.woId).map(x => x.woId).join(', ') : undefined }); onDone?.()
     }}>{done ? `Submit ${kind.toLowerCase()} inspection` : `${items.filter(x => x.ok === null).length} items left`}</Button>
   </div>

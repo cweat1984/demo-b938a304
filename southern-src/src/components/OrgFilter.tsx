@@ -22,10 +22,10 @@ export default function OrgFilter() {
   const set = (p: Partial<typeof f>) => setUI({ filter: { ...f, ...p } })
   return (
     <>
-      <button onClick={() => setOpen(true)} data-testid="org-filter" aria-label={`Company view: ${label}`} className={cn('shrink-0 inline-flex items-center gap-2 h-10 px-2.5 sm:px-3.5 rounded-full border hairline text-sm font-semibold hover:bg-surface-2 transition', label !== 'All Company' && 'border-accent/50 text-accent')}>
+      <button onClick={() => setOpen(true)} data-testid="org-filter" aria-label={`Company view: ${label}`} className={cn('shrink-0 inline-flex items-center gap-2 h-11 min-h-[44px] min-w-[44px] px-2.5 sm:px-3.5 rounded-full border hairline text-sm font-semibold hover:bg-surface-2 transition', label !== 'All Company' && 'border-accent/50 text-accent')}>
         {d ? <span className="size-2.5 rounded-full" style={{ background: d.color }} /> : <Building2 className="size-4" />}
-        <span className="max-w-[160px] truncate hidden sm:inline">{label}</span>
-        <ChevronDown className="size-4 opacity-60 hidden sm:block" />
+        <span className="max-w-[160px] truncate">{label}</span>
+        <ChevronDown className="size-4 opacity-60" />
       </button>
       <Sheet open={open} onClose={() => setOpen(false)} title="Company view" sub="Every screen, number and report follows this filter." width={440}>
         <div className="label mb-2">Division</div>

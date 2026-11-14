@@ -24,7 +24,7 @@ export default function Shop() {
   const bds = db.breakdowns.filter(b => ids.has(b.unitId))
   const openBd = bds.filter(b => b.status !== 'Resolved')
   const pm = useMemo(() => units.filter(u => u.category !== 'Trailer' || u.nextServiceDate).map(u => ({ u, s: serviceStatus(u) })).sort((a, b) => Number(b.s.overdue) - Number(a.s.overdue) || Number(b.s.dueSoon) - Number(a.s.dueSoon) || a.s.daysLeft - b.s.daysLeft), [units])
-  const parts = db.items.filter(i => ['Parts', 'Filters', 'Fluids & Oils', 'Tires'].includes(i.category))
+  const parts = db.items.filter(i => ['Parts', 'Filters', 'Fluids & Oils', 'Tires'].includes(i.category) && (f.branchId === 'all' || (i.branchId ?? 'br-okc') === f.branchId))
   const dvirs = db.dvirs.filter(d => ids.has(d.unitId)).slice(0, 40)
   return (
     <div className="max-w-[1500px] mx-auto">

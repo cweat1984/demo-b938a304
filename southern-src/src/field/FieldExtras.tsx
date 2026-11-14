@@ -8,6 +8,7 @@ import { Construction, Siren, Users, CheckCircle2, Camera, FileText } from 'luci
 import type * as T from '../data/types'
 import { useStore, actions } from '../data/store'
 import { byId, fullName, crewOn, customerOf, siteOf } from '../data/logic'
+import { dtContext, payRulesOf, ruleBlurb, ruleFor, splitEntries, sumSlices, wagesOf } from '../data/payRules'
 import { today, addDays, cn, fmtDate } from '../lib/util'
 import { Button, Field, Badge, Avatar, CallButton, confirmChoice } from '../components/ui'
 import { PER_DIEM_RATES } from '../data/seed'
@@ -19,11 +20,13 @@ import JobExtras from '../components/JobExtras'
 const money = (n: number) => moneyHidden() ? '—' : `$${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 /** Monday of the week containing d */
 const monday = (d: string) => { const x = new Date(d + 'T12:00:00'); const k = (x.getDay() + 6) % 7; return addDays(d, -k) }
-function weekPay(entries: T.TimeEntry[], rate: number) {
-  const hours = entries.reduce((s, t) => s + t.hours, 0), reg = Math.min(40, hours), ot = Math.max(0, hours - 40)
+function weekPay(db: T.DB, entries: T.TimeEntry[], emp: T.Employee) {
+  const rule = ruleFor(payRulesOf(db), emp)
+  const slice = sumSlices([...splitEntries(entries, rule, e => dtContext(db, e.jobId)).values()])
+  const hours = entries.reduce((s, t) => s + t.hours, 0)
   const pd = entries.reduce((s, t) => s + t.perDiems.reduce((a, p) => a + (PER_DIEM_RATES[p] ?? 0), 0), 0)
-  const wages = reg * rate + ot * rate * 1.5
-  return { hours, reg, ot, pd, wages, gross: wages + pd, net: wages * 0.76 + pd }
+  const wages = wagesOf(emp.rate, slice)
+  return { hours, reg: slice.reg, ot: slice.ot, dt: slice.dt, otMult: slice.otMult, dtMult: slice.dtMult, pd, wages, gross: wages + pd, net: wages * 0.76 + pd, blurb: ruleBlurb(rule) }
 }
 
 export function MyPay() {
@@ -36,10 +39,10 @@ function MyPayInner() {
   const jobLocal = useJobLocal(current)
   const t = today(), wk = monday(t)
   const mine = db.time.filter(x => x.employeeId === me.id)
-  const thisWeek = weekPay(mine.filter(x => x.date >= wk && x.date <= t), me.rate)
+  const thisWeek = weekPay(db, mine.filter(x => x.date >= wk && x.date <= t), me)
   // past weeks: real approved time where we have it, otherwise a typical demo week (5 × 10 h, hotel per diem)
   const demoWeek = (from: string, n: number): T.TimeEntry[] => [0, 1, 2, 3, 4].map(d => ({ id: `demo-${n}-${d}`, employeeId: me.id, date: addDays(from, d), activity: 'Lifting & Hoisting', start: '06:00', end: '16:30', mealMin: 30, hours: n % 2 ? 10 : 9, perDiems: ['Hotel'], status: 'Exported', submittedAt: '' }))
-  const stubs = [1, 2, 3, 4].map(n => { const from = addDays(wk, -7 * n), to = addDays(from, 6); const real = mine.filter(x => x.date >= from && x.date <= to); if (!real.length && (me.hireDate ?? '') > from) return null; return { from, to, paid: addDays(to, 5), ...weekPay(real.length ? real : demoWeek(from, n), me.rate) } }).filter((x): x is NonNullable<typeof x> => !!x) // dive2 field M6: no invented stubs before the hire date
+  const stubs = [1, 2, 3, 4].map(n => { const from = addDays(wk, -7 * n), to = addDays(from, 6); const real = mine.filter(x => x.date >= from && x.date <= to); if (!real.length && (me.hireDate ?? '') > from) return null; return { from, to, paid: addDays(to, 5), ...weekPay(db, real.length ? real : demoWeek(from, n), me) } }).filter((x): x is NonNullable<typeof x> => !!x) // dive2 field M6: no invented stubs before the hire date
   const [stub, setStub] = useState<string | null>(null)
   return <div className="flex flex-col gap-4 pb-8" data-testid="my-pay">
     <div className="rounded-3xl bg-surface p-5">
@@ -48,15 +51,15 @@ function MyPayInner() {
       <div className="text-xs text-muted">{money(thisWeek.wages)} wages before taxes + {money(thisWeek.pd)} per diem (not taxed, shown apart) · paid Friday {fmtDate(addDays(wk, 11))}</div>
       <div className="grid grid-cols-3 gap-2 mt-4 text-center">
         <div className="rounded-2xl bg-surface-2 p-3"><div className="text-xs text-muted">Regular</div><div className="font-semibold num">{thisWeek.reg.toFixed(1)}h</div></div>
-        <div className="rounded-2xl bg-surface-2 p-3"><div className="text-xs text-muted">Overtime</div><div className="font-semibold num">{thisWeek.ot.toFixed(1)}h</div></div>
+        <div className="rounded-2xl bg-surface-2 p-3"><div className="text-xs text-muted">Overtime</div><div className="font-semibold num" data-testid="pay-week-ot">{(thisWeek.ot + thisWeek.dt).toFixed(1)}h</div>{thisWeek.dt > 0 && <div className="text-[11px] text-muted">{thisWeek.dt.toFixed(1)}h double</div>}</div>
         <div className="rounded-2xl bg-surface-2 p-3"><div className="text-xs text-muted">Per diem</div><div className="font-semibold num">{money(thisWeek.pd)}</div></div>
       </div>
-      <div className="text-sm text-muted mt-3">Rate <b className="text-ink num">${me.rate}/hr</b> · OT 1.5× after 40 h{me.local ? <> · home local {me.local}</> : null}{current ? <> · job #{current.jobNo} pays <span data-testid="pay-job-local">{jobLocal}</span></> : null}</div>
+      <div className="text-sm text-muted mt-3">Rate <b className="text-ink num">${me.rate}/hr</b> · {thisWeek.blurb}{me.local ? <> · home local {me.local}</> : null}{current ? <> · job #{current.jobNo} pays <span data-testid="pay-job-local">{jobLocal}</span></> : null}</div>
     </div>
     <div className="label px-1">Pay stubs</div>
     <div className="rounded-3xl bg-surface divide-y divide-[var(--line)]">{stubs.length ? stubs.map(s => <div key={s.from}><button className="w-full flex items-center gap-3 px-4 py-3 text-left min-h-[56px]" data-testid="pay-stub" aria-expanded={stub === s.from} onClick={() => setStub(stub === s.from ? null : s.from)}>
-      <FileText className="size-5 text-muted" /><span className="flex-1"><span className="block font-semibold">Paid {fmtDate(s.paid)}</span><span className="block text-xs text-muted">{fmtDate(s.from)} – {fmtDate(s.to)} · {s.hours.toFixed(1)} h{s.ot ? ` (${s.ot.toFixed(1)} OT)` : ''}</span></span>
-      <span className="text-right"><span className="block font-semibold num">{money(s.net)}</span><span className="block text-[11px] text-muted">take-home</span></span></button>{stub === s.from && <div className="px-4 pb-4 text-sm grid grid-cols-2 gap-y-1" data-testid="stub-detail"><span className="text-muted">Regular {s.reg.toFixed(1)} h</span><span className="text-right num">{money(s.reg * me.rate)}</span><span className="text-muted">Overtime {s.ot.toFixed(1)} h × 1.5</span><span className="text-right num">{money(s.ot * me.rate * 1.5)}</span><span className="font-semibold">Gross wages</span><span className="text-right num font-semibold">{money(s.wages)}</span><span className="text-muted">Taxes & withholding (est.)</span><span className="text-right num">−{money(s.wages * 0.24)}</span><span className="text-muted">Per diem (not taxed)</span><span className="text-right num">+{money(s.pd)}</span><span className="font-semibold border-t hairline pt-1">Take-home</span><span className="text-right num font-semibold border-t hairline pt-1">{money(s.net)}</span></div>}</div>) : <div className="p-4 text-sm text-muted">No paid weeks yet — your first stub shows here after your first payday (Friday after your first full week).</div>}</div>
+      <FileText className="size-5 text-muted" /><span className="flex-1"><span className="block font-semibold">Paid {fmtDate(s.paid)}</span><span className="block text-xs text-muted">{fmtDate(s.from)} – {fmtDate(s.to)} · {s.hours.toFixed(1)} h{s.ot + s.dt ? ` (${(s.ot + s.dt).toFixed(1)} OT)` : ''}</span></span>
+      <span className="text-right"><span className="block font-semibold num">{money(s.net)}</span><span className="block text-[11px] text-muted">take-home</span></span></button>{stub === s.from && <div className="px-4 pb-4 text-sm grid grid-cols-2 gap-y-1" data-testid="stub-detail"><span className="text-muted">Regular {s.reg.toFixed(1)} h</span><span className="text-right num">{money(s.reg * me.rate)}</span><span className="text-muted">Overtime {s.ot.toFixed(1)} h × {s.otMult}</span><span className="text-right num">{money(s.ot * me.rate * s.otMult)}</span>{s.dt > 0 && <><span className="text-muted">Double time {s.dt.toFixed(1)} h × {s.dtMult}</span><span className="text-right num">{money(s.dt * me.rate * s.dtMult)}</span></>}<span className="font-semibold">Gross wages</span><span className="text-right num font-semibold">{money(s.wages)}</span><span className="text-muted">Taxes & withholding (est.)</span><span className="text-right num">−{money(s.wages * 0.24)}</span><span className="text-muted">Per diem (not taxed)</span><span className="text-right num">+{money(s.pd)}</span><span className="font-semibold border-t hairline pt-1">Take-home</span><span className="text-right num font-semibold border-t hairline pt-1">{money(s.net)}</span></div>}</div>) : <div className="p-4 text-sm text-muted">No paid weeks yet — your first stub shows here after your first payday (Friday after your first full week).</div>}</div>
     <button className="rounded-3xl bg-surface p-4 flex items-center gap-3 text-left min-h-[56px]" onClick={() => toast('W-2 for 2025', { description: 'Demo: opens the PDF from Paychex. Your real W-2 comes from payroll in January.' })} data-testid="pay-w2"><FileText className="size-5 text-muted" /><span className="flex-1 font-semibold">W-2 · 2025</span><span className="text-sm text-accent font-semibold">Open</span></button>
     <div className="text-xs text-muted px-1">Demo figures worked out from your approved time. Questions? Call payroll from More → Call the office.</div>
   </div>
@@ -66,6 +69,8 @@ const KINDS: { k: T.Incident['kind']; label: string }[] = [{ k: 'Near Miss', lab
 export function IncidentForm({ onDone }: { onDone: () => void }) {
   const { db, me, current } = useMe()
   const [kind, setKind] = useState<T.Incident['kind']>('Near Miss')
+  const [who, setWho] = useState('')
+  const online = useStore(s => s.ui.online)
   const [desc, setDesc] = useState(''), [stop, setStop] = useState(false), [refs, setRefs] = useState<string[]>([]), [upl, setUpl] = useState(false), [busy, setBusy] = useState(false)
   // field fixes: real GPS only when the phone shares it — never claim a location we don't have
   const [loc, setLoc] = useState<{ lat: number; lng: number } | 'off' | null>(null)
@@ -75,13 +80,14 @@ export function IncidentForm({ onDone }: { onDone: () => void }) {
   const send = () => {
     if (busy) return; setBusy(true)
     const gps = loc && loc !== 'off' ? loc : undefined
-    actions.addIncident({ date: today(), jobId: current?.id, employeeId: me.id, kind, severity: stop || kind === 'First Aid' ? 'High' : 'Medium', description: `${stop ? 'STOP WORK called. ' : ''}${desc.trim()}`, status: 'Reported', reportedBy: fullName(me), photos: refs.length, photoRefs: refs, ...(gps ?? {}) })
-    if (!navigator.onLine) toast.warning('Saved on this phone — not sent yet', { description: `It goes to Safety the moment you have signal.${sup?.phone ? ` If someone is hurt, call ${sup.first} now: ${sup.phone}.` : ' If someone is hurt, call your supervisor now.'}`, duration: 12000 })
+    actions.addIncident({ date: today(), jobId: current?.id, employeeId: who || undefined, kind, severity: stop || kind === 'First Aid' ? 'High' : 'Medium', description: `${stop ? 'STOP WORK called. ' : ''}${desc.trim()}`, status: 'Reported', reportedBy: fullName(me), photos: refs.length, photoRefs: refs, ...(gps ?? {}) })
+    if (!navigator.onLine || online === false) toast.warning('Saved on this phone — not sent yet', { description: `It goes to Safety the moment you have signal.${sup?.phone ? ` If someone is hurt, call ${sup.first} now: ${sup.phone}.` : ' If someone is hurt, call your supervisor now.'}`, duration: 12000 })
     else toast.success('Report sent', { description: `Safety${safety ? ` (${safety.first})` : ''}${sup ? ` and ${sup.first}` : ''} have it now. Thank you for speaking up.` }); onDone()
   }
   return <div className="flex flex-col gap-4 pb-8" data-testid="incident-form">
     <div className="rounded-2xl bg-bad/12 text-bad p-3 text-sm font-semibold">If someone is badly hurt, call 911 first.</div>
     <div className="grid grid-cols-2 gap-2">{KINDS.map(o => <button key={o.k} onClick={() => setKind(o.k)} data-testid={`inc-${o.k.replace(/\s/g, '')}`} className={cn('min-h-[48px] rounded-2xl px-3 font-semibold text-sm border', kind === o.k ? 'bg-bad-solid text-white border-transparent' : 'bg-surface-2 border-line')}>{o.label}</button>)}</div>
+    <Field label="Who was hurt?"><select className="input" data-testid="inc-who" value={who} onChange={e => setWho(e.target.value)}><option value="">Nobody hurt</option>{db.employees.filter(e => e.status === 'Active').sort((a, b) => a.last.localeCompare(b.last)).map(e => <option key={e.id} value={e.id}>{fullName(e)} · {e.craft}</option>)}</select></Field>
     <Field label="What happened? (talk-to-text works)"><textarea className="input min-h-[110px]" value={desc} onChange={e => setDesc(e.target.value)} placeholder="Where, who, what you saw" data-testid="inc-desc" /></Field>
     <div className="flex gap-2"><label className="flex-1 min-h-[48px] rounded-2xl bg-surface-2 font-semibold inline-flex items-center justify-center gap-2 cursor-pointer"><Camera className="size-5" />{upl ? 'Saving…' : refs.length ? `${refs.length} photo${refs.length > 1 ? 's' : ''}` : 'Add photo'}<input type="file" accept="image/*" capture="environment" multiple className="hidden" data-testid="inc-photo" onChange={e => { const fs = [...(e.target.files ?? [])]; e.target.value = ''; if (!fs.length) return; setUpl(true); savePhotos(fs, 'inc', 6).then(r => setRefs(p => [...p, ...r])).catch(err => toast.error(String(err.message ?? err))).finally(() => setUpl(false)) }} /></label>
       <button className={cn('flex-1 min-h-[48px] rounded-2xl font-semibold border', stop ? 'bg-bad/15 border-bad text-bad' : 'border-line')} onClick={() => setStop(!stop)} data-testid="inc-stop">{stop ? '✓ Stop work called' : 'Stop work?'}</button></div>
@@ -138,7 +144,14 @@ function CrewApprove({ pending, flagged }: { pending: T.TimeEntry[]; flagged: T.
   const go = async () => {
     const r = await confirmChoice(`Approve ${chosen.length} entr${chosen.length === 1 ? 'y' : 'ies'}, ${h.toFixed(1)} h?`, 'Payroll sees them right away.', [{ label: 'Approve', value: true, tone: 'primary' }, { label: 'Cancel', value: false }])
     if (!r?.value) return
-    actions.approveTime(chosen.map(p => p.id)); toast.success(`Approved ${chosen.length} time entr${chosen.length > 1 ? 'ies' : 'y'}`, { description: 'Payroll sees them now' })
+    const day = new Map<string, number>()
+    chosen.forEach(p => { const k = `${p.employeeId}|${p.date}`; day.set(k, (day.get(k) ?? 0) + p.hours) })
+    const over = new Set([...day].filter(([, h]) => h > 16).map(([k]) => k))
+    const ok = chosen.filter(p => !over.has(`${p.employeeId}|${p.date}`))
+    const held = chosen.length - ok.length
+    if (ok.length) actions.approveTime(ok.map(p => p.id))
+    if (held) toast.warning(`${held} entr${held > 1 ? 'ies' : 'y'} not approved`, { description: 'A day over 16 hours stays with the office. Split it or correct the times first.' })
+    else toast.success(`Approved ${ok.length} time entr${ok.length > 1 ? 'ies' : 'y'}`, { description: 'Payroll sees them now' })
   }
   return <div className="flex flex-col gap-2" data-testid="crew-approve-list">
     <div className="label">Crew time to approve</div>

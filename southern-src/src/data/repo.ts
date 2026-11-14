@@ -2,6 +2,7 @@
 // implementation with the same interface — UI and business rules do not change.
 import type { DB } from './types'
 import { seed, DB_VERSION } from './seed'
+import { ensurePayRules } from './payRules'
 
 export interface DataRepository {
   name: string
@@ -42,7 +43,7 @@ export const localRepository: DataRepository = {
       // Never wipe user changes: re-seed only when empty, on a version bump, or when a stale-day DB has no user edits.
       const touched = !!db && (db.audit ?? []).some(a => a.at > db.seededAt)
       const fresh = db && db.version === DB_VERSION && (chicagoDay(new Date(db.seededAt)) === chicagoDay(new Date()) || touched)
-      if (fresh) return db!
+      if (fresh) return ensurePayRules(db!)
     } catch { /* fall through */ }
     return this.reset()
   },

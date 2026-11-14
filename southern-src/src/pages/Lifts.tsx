@@ -71,7 +71,7 @@ function LiftPlan({ job, canApprove }: { job: T.Job; canApprove: boolean }) {
   const gbPct = gb.psf / allow
   const set = (k: keyof typeof lift) => (e: React.ChangeEvent<HTMLInputElement>) => setLift({ ...lift, [k]: Number(e.target.value.replace(/[^\d.]/g, '')) || 0 })
   const CHECKS = [['a', 'Load weight verified (BOL / manufacturer data)'], ['b', 'Rigging inspected & rated for the load'], ['c', 'Site walked: power lines, underground, swing radius'], ['d', `Wind limit set at ${windLim} mph — anemometer on boom tip`], ['e', 'Lift director, signal person and crew briefed (JSA signed)']]
-  const ok = lc && lc.pct < 0.9 && gbPct < 0.9 && CHECKS.every(([k]) => checks[k])
+  const ok = lc && lc.pct < 0.9 && gbPct < 0.9 && lift.radius < lift.boom && CHECKS.every(([k]) => checks[k])
   const critical = !!lc && lc.pct >= 0.75
   return (
     <div className="flex flex-col gap-4" data-testid="lift-plan">

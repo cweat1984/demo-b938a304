@@ -76,7 +76,7 @@ const count = (p, emp, job, date) => p.evaluate(({ emp, job, date }) => window._
   await p.evaluate(() => window.__store.getState().signIn('dispatch', 'Demo role'))
   await p.waitForTimeout(300)
   ok(await p.locator('[data-testid=undo-btn]').isDisabled() && (await p.locator('[data-testid=undo-label]').textContent()) === '', 'role change drops roster history')
-  await p.evaluate(() => window.__store.getState().signIn('guest', 'Demo role'))
+  await p.evaluate(() => { sessionStorage.setItem('sc-guest', '1'); window.__store.getState().signIn('guest', 'Guest pass') })
   await p.waitForTimeout(300)
   ok(await p.locator('[data-testid=undo-bar]').count() === 0, 'guest has no undo bar')
   ok(!errors.length, `no page errors (${errors.slice(0, 2).join(' | ')})`)

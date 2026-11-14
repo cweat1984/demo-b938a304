@@ -2,7 +2,7 @@
 // partial payments, and an Undo on each posted payment.
 import { useState } from 'react'
 import { Button, Field } from './ui'
-import { today, money, fmtDate } from '../lib/util'
+import { today, money, money2, fmtDate } from '../lib/util'
 import { parseNum, typing } from '../lib/num'
 
 export type Pay = { id?: string; date: string; amount: number; method: string; ref: string }
@@ -45,5 +45,5 @@ export function PaymentForm({ open, verb, onPay, testid, minDate }: { open: numb
 
 export function PaymentList({ pays, onUndo, canUndo }: { pays: Pay[]; onUndo: (i: number) => void; canUndo: boolean }) {
   if (!pays.length) return null
-  return <div className="card p-0" data-testid="pay-list">{pays.map((p, i) => <div key={p.id ?? i} className="flex items-center gap-3 px-4 py-2.5 border-b hairline last:border-0 text-sm"><span className="flex-1">{fmtDate(p.date)} · {p.method} {p.ref}</span><span className="num text-ok">{money(p.amount)}</span>{canUndo && <Button size="sm" variant="ghost" data-testid="pay-undo" onClick={() => onUndo(i)}>Undo</Button>}</div>)}</div>
+  return <div className="card p-0" data-testid="pay-list">{pays.map((p, i) => <div key={p.id ?? i} className="flex items-center gap-3 px-4 py-2.5 border-b hairline last:border-0 text-sm"><span className="flex-1">{fmtDate(p.date)} · {p.method} {p.ref}</span><span className="num text-ok">{money2(p.amount)}</span>{canUndo && <Button size="sm" variant="ghost" data-testid="pay-undo" onClick={() => onUndo(i)}>Undo</Button>}</div>)}</div>
 }

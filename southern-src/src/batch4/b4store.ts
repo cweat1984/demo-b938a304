@@ -38,7 +38,7 @@ export interface InspItem { k: string; ok: boolean | null; note?: string; photo?
 export interface Inspection { id: string; unitId: string; kind: InspKind; at: string; by: string; items: InspItem[] }
 
 export interface Msg { id: string; from: string; text: string; photo?: string; at: string; mentions: string[]; system?: boolean }
-export interface Chat { id: string; kind: 'job' | 'dm'; jobId?: string; title: string; members: string[]; customer?: string; msgs: Msg[]; lastRead: number }
+export interface Chat { id: string; kind: 'job' | 'dm'; jobId?: string; title: string; members: string[]; customer?: string; msgs: Msg[]; lastRead: number; lastReadBy?: Record<string, number> }
 export type RuleKey = 'wind' | 'cert' | 'load' | 'ticket'
 export interface AlertRule { key: RuleKey; label: string; detail: string; on: boolean; push: boolean; sms: boolean }
 export interface FeedAlert { id: string; at: string; rule: RuleKey | 'mention' | 'message'; title: string; body: string; read: boolean; page?: string }
@@ -108,11 +108,11 @@ export const useB4 = create<B4>()(persist((set, get) => ({
     const chat = get().chats.find(c => c.id === chatId); if (!chat) return
     const mentions = chat.members.filter(n => new RegExp('@' + n.split(' ')[0] + '\\b', 'i').test(m.text))
     const msg: Msg = { ...m, id: rid(), at: new Date().toISOString(), mentions }
-    set({ chats: get().chats.map(c => c.id === chatId ? { ...c, msgs: [...c.msgs, msg], lastRead: c.msgs.length + 1 } : c) })
+    set({ chats: get().chats.map(c => c.id === chatId ? { ...c, msgs: [...c.msgs, msg] } : c) })
     mentions.forEach(n => get().fire('mention', `${m.from} mentioned ${n}`, `${chat.title}: ${m.text.slice(0, 80)}`, 'messages'))
   },
   openDm(me, other) { const ex = get().chats.find(c => c.kind === 'dm' && c.members.includes(other) && c.members.includes(me)); if (ex) return ex.id; const id = 'dm-' + rid(); set({ chats: [...get().chats, { id, kind: 'dm', title: other, members: [me, other], msgs: [], lastRead: 0 }] }); return id },
-  read(chatId) { set({ chats: get().chats.map(c => c.id === chatId ? { ...c, lastRead: c.msgs.length } : c) }) },
+  read(chatId) { const me = useStore.getState().session?.name; set({ chats: get().chats.map(c => { if (c.id !== chatId) return c; const by = { ...(c.lastReadBy ?? {}) }; if (me) by[me] = c.msgs.length; const cursors = c.members.map(n => by[n] ?? c.lastRead); const lastRead = cursors.length ? Math.min(...cursors) : c.lastRead; return { ...c, lastReadBy: by, lastRead } }) }) },
   setRule(k, p) { set({ rules: get().rules.map(r => r.key === k ? { ...r, ...p } : r) }) },
   fire(rule, title, body, page) {
     const r = get().rules.find(x => x.key === rule); if (r && !r.on) return
@@ -137,8 +137,18 @@ export function defectToWorkOrder(unitId: string, item: string, note: string | u
   const n = Math.max(7300, ...db.workOrders.map(w => Number(w.woNo.split('-')[1]) || 0)) + 1
   const id = 'wo-insp-' + rid()
   const unit = db.equipment.find(e => e.id === unitId)
+  const critical = /two-block|LMI|brake|structural|wire rope/i.test(item)
   s.commit('Opened work order from inspection', `Unit ${unit?.unit ?? ''}`, `${kind} inspection defect: ${item}`, d => {
-    d.workOrders.unshift({ id, woNo: `WO-${n}`, unitId, title: `${kind} inspection: ${item}`, complaint: note || item, priority: /two-block|LMI|brake|structural|wire rope/i.test(item) ? 'Critical' : 'High', status: 'Open', opened: today(), due: today(), parts: [], laborHrs: 0, laborRate: 115, source: 'Inspection' })
+    d.workOrders.unshift({ id, woNo: `WO-${n}`, unitId, title: `${kind} inspection: ${item}`, complaint: note || item, priority: critical ? 'Critical' : 'High', status: 'Open', opened: today(), due: today(), parts: [], laborHrs: 0, laborRate: 115, source: 'Inspection' })
+    if (critical) { const u = d.equipment.find(e => e.id === unitId); if (u) u.status = 'Out of Service' }
   })
   return `WO-${n}`
+}
+
+/** A passed annual inspection certifies the crane for another year. */
+export function certifyAnnual(unitId: string) {
+  const s = useStore.getState()
+  const unit = s.db.equipment.find(e => e.id === unitId)
+  const due = addDays(today(), 365)
+  s.commit('Certified annual inspection', `Unit ${unit?.unit ?? ''}`, `annual inspection ${due}`, d => { const u = d.equipment.find(e => e.id === unitId); if (u) u.annualInspection = due })
 }

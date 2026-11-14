@@ -1,8 +1,9 @@
 // Role briefings: a spoken summary + tappable items, built from live data for each role.
 import type * as T from './types'
 import type { PageKey } from './roles'
-import { byId, fullName, customerOf, siteOf, certBand, jobConflicts, jobsOn, crewOn, assignmentsFor, serviceStatus, agingBucket, jobCosting, costJobs, yearSeries, isLive, inScope, type OrgFilter } from './logic'
-import { today, addDays, money, fmtDate, diffDays } from '../lib/util'
+import { byId, fullName, customerOf, siteOf, certBand, jobConflicts, jobsOn, crewOn, assignmentsFor, serviceStatus, agingBucket, jobCosting, costJobs, yearSeries, isLive, inScope, overtimeByEntry, type OrgFilter } from './logic'
+import { payRulesOf, ruleBlurb, ruleFor } from './payRules'
+import { today, addDays, money, fmtDate, diffDays, startOfWeek } from '../lib/util'
 import { isOpen, isLow, sdsExpired, rollup, isSwag, targetUnit } from './invcore'
 import { companyOf } from './brand'
 import { WIND_DEMO } from './wind/demo'
@@ -24,6 +25,11 @@ export function siteWeather(site: { id: string; lat: number }, date = today()) {
 }
 const TALKS = ['Tag lines: never wrap around your hand', 'Pinch points during outrigger setup', 'Overhead power lines — 20 ft minimum clearance', 'Wind limits: check the load chart, not your gut', 'Heat stress: water, rest, shade', 'Three points of contact on crane and truck', 'Rigging inspection before every lift', 'Swing radius barricades and spotters', 'Hand signals — one designated signal person', 'Fatigue and the drive home']
 export const talkOfDay = (d = today()) => TALKS[hash(d) % TALKS.length]
+/** The line the briefing reads: a toolbox talk or JSA that was actually posted today, then the canned fallback. */
+export function postedTalk(db: T.DB, d = today()) {
+  const posted = db.talks.filter(t => t.date === d)
+  return posted.find(t => t.kind === 'Toolbox Talk')?.title ?? posted.find(t => t.kind === 'JSA')?.title ?? talkOfDay(d)
+}
 
 export function buildBriefing(db: T.DB, role: T.RoleKey, me: T.Employee | undefined, f: OrgFilter): Briefing {
   const t = today(), tm = addDays(t, 1)
@@ -57,10 +63,14 @@ export function buildBriefing(db: T.DB, role: T.RoleKey, me: T.Employee | undefi
     const jobIds = new Set(job ? [job.id] : [])
     const units = new Set([me?.homeTruckId, me?.homeCraneId, job?.craneId].filter(Boolean) as string[])
     const sdsIds = [...new Set([...db.checkouts.filter(x => (x.jobId && jobIds.has(x.jobId)) || units.has(targetUnit(db, x.target) ?? '')).map(x => byId(db.items, x.itemId)?.sdsId), 'sds-3', 'sds-5', 'sds-10'].filter(Boolean) as string[])].slice(0, 6)
-    const week = me ? db.time.filter(x => x.employeeId === me.id && x.date > addDays(t, -7)).reduce((s, x) => s + x.hours, 0) : 0
+    const weekRows = me ? db.time.filter(x => x.employeeId === me.id && x.date > addDays(t, -7)) : []
+    const week = weekRows.reduce((s, x) => s + x.hours, 0)
+    const minePay = me ? overtimeByEntry(db) : undefined
+    const otH = weekRows.reduce((s, x) => s + (minePay?.get(x.id)?.ot ?? 0) + (minePay?.get(x.id)?.dt ?? 0), 0)
+    const otLine = otH >= 0.5 ? ` ${Math.round(otH)} of those hours are overtime.` : ''
     const myRecon = me ? reconDays(db).filter(d => d.employeeId === me.id && d.status === 'red') : []
     const when = asg && asg.date !== t ? `${fmtDate(asg.date)}` : 'today'
-    const text = job ? `${greet()}${name}. ${when === 'today' ? 'Today' : `Next up, ${when}`} you're on job ${job.jobNo} for ${cust!.name} in ${site!.city}, start time ${job.startTime}.${cr ? ` ${crane ? 'Crane' : 'Unit'} ${cr.unit}.` : ''} Wind ${wx!.wind} gusting ${wx!.gust} miles an hour${wx!.ok ? '' : ' — check limits before you fly anything'}. ${crew.length ? `${plural(crew.length, 'person')} on the crew.` : ''}${tickets.length ? ` ${plural(tickets.length, 'ticket')} to get signed.` : ''}${certs.length ? ` Heads up: ${plural(certs.length, 'cert')} expiring.` : ''} ${week.toFixed(0)} hours so far this week. Be safe out there.` : `${greet()}${name}. You're not on a job today. ${week.toFixed(0)} hours this week.`
+    const text = job ? `${greet()}${name}. ${when === 'today' ? 'Today' : `Next up, ${when}`} you're on job ${job.jobNo} for ${cust!.name} in ${site!.city}, start time ${job.startTime}.${cr ? ` ${crane ? 'Crane' : 'Unit'} ${cr.unit}.` : ''} Wind ${wx!.wind} gusting ${wx!.gust} miles an hour${wx!.ok ? '' : ' — check limits before you fly anything'}. ${crew.length ? `${plural(crew.length, 'person')} on the crew.` : ''}${tickets.length ? ` ${plural(tickets.length, 'ticket')} to get signed.` : ''}${certs.length ? ` Heads up: ${plural(certs.length, 'cert')} expiring.` : ''} ${week.toFixed(0)} hours so far this week.${otLine} Be safe out there.` : `${greet()}${name}. You're not on a job today. ${week.toFixed(0)} hours this week.${otLine}`
     const text2 = text + (myRecon.length ? ` You have ${plural(myRecon.length, 'timecard')} needing a reason.` : '')
     return {
       title: 'Your day', text: text2,
@@ -77,14 +87,14 @@ export function buildBriefing(db: T.DB, role: T.RoleKey, me: T.Employee | undefi
         sec('Crew', 'Users', crew.map(e => ({ label: fullName(e), sub: `${e.craft} · ${e.phone}`, to: { href: `tel:${e.phone}` } }))),
         sec('Tickets to get signed', 'FileSignature', tickets.map(x => ({ label: `${fmtDate(x.date)} · ${x.status}`, sub: x.correction ?? x.work, tone: x.status === 'Needs Correction' ? 'bad' : 'warn', to: job ? { fieldJob: job.id, date: x.date } : undefined }))),
         sec('Safety', 'ShieldCheck', [
-          { label: `Toolbox talk: ${talkOfDay()}`, sub: 'Sign today’s JSA in More › JSA & toolbox' },
+          { label: `Toolbox talk: ${postedTalk(db)}`, sub: 'Sign today’s JSA in More › JSA & toolbox' },
           ...(site?.hospital ? [{ label: `Nearest hospital: ${site.hospital}`, tone: 'info' } as BriefItem] : []),
           ...(job?.notes ? [{ label: job.notes, tone: 'warn' } as BriefItem] : []),
           ...certs.map(x => ({ label: `${x.type} ${certBand(x).band === 'expired' ? 'expired' : `expires ${fmtDate(x.expires)}`}`, tone: certBand(x).band === 'expired' ? 'bad' : 'warn', sub: 'Tell Safety / HR' } as BriefItem)),
         ]),
         sec('Chemicals on the job & truck', 'FlaskConical', sdsIds.map(id => byId(db.sds, id)).filter(Boolean).map(s => ({ label: s!.product, sub: `${s!.signal === 'None' ? 'SDS' : s!.signal} · first aid, PPE, spill`, to: { sds: s!.id }, tone: s!.signal === 'Danger' ? 'bad' : undefined } as BriefItem))),
         sec('Timecards needing a reason', 'AlertTriangle', myRecon.map(d => ({ label: `${fmtDate(d.date)} · ${d.diff > 0 ? '+' : ''}${fmtH(d.diff)} vs tickets`, sub: promptText(d), tone: 'bad', to: { page: 'field', hash: 'time' }, testid: 'brief-recon' } as BriefItem))),
-        sec('Hours this week', 'Clock', [{ label: `${week.toFixed(1)} hours`, sub: 'Last 7 days · tap for time', to: { page: 'field', hash: 'time' } }]),
+        sec('Hours this week', 'Clock', [{ label: `${week.toFixed(1)} hours`, sub: otH >= 0.5 ? `${otH.toFixed(1)} h overtime or double time · ${me ? ruleBlurb(ruleFor(payRulesOf(db), me)) : ''}` : 'Last 7 days · tap for time', to: { page: 'field', hash: 'time' }, testid: 'brief-ot' }]),
       ],
     }
   }
@@ -162,9 +172,9 @@ export function buildBriefing(db: T.DB, role: T.RoleKey, me: T.Employee | undefi
     const gaps = chems.filter(i => !byId(db.sds, i.sdsId) || sdsExpired(byId(db.sds, i.sdsId)))
     const rig = db.items.filter(i => i.oos || (i.inspectionDue && i.inspectionDue <= addDays(t, 14))).sort((a, b) => (a.oos ? '0' : a.inspectionDue!).localeCompare(b.oos ? '0' : b.inspectionDue!))
     return {
-      title: 'Safety', text: `${greet()}${name}. ${plural(inc.length, 'open incident')}. ${plural(certs.length, 'cert')} expired or expiring within 30 days. ${plural(insp.length, 'inspection')} due in the next two weeks. ${gaps.length ? `${plural(gaps.length, 'chemical')} with a missing or out-of-date SDS. ` : ''}${plural(rig.length, 'rigging item')} due or tagged out. Today's toolbox talk: ${talkOfDay()}.`,
+      title: 'Safety', text: `${greet()}${name}. ${plural(inc.length, 'open incident')}. ${plural(certs.length, 'cert')} expired or expiring within 30 days. ${plural(insp.length, 'inspection')} due in the next two weeks. ${gaps.length ? `${plural(gaps.length, 'chemical')} with a missing or out-of-date SDS. ` : ''}${plural(rig.length, 'rigging item')} due or tagged out. Today's toolbox talk: ${postedTalk(db)}.`,
       sections: [
-        sec('Toolbox talk of the day', 'Megaphone', [{ label: talkOfDay(), sub: 'Push to every crew’s JSA', tone: 'info', to: { page: 'safety', hash: 'talks' } }]),
+        sec('Toolbox talk of the day', 'Megaphone', [{ label: postedTalk(db), sub: 'Push to every crew’s JSA', tone: 'info', to: { page: 'safety', hash: 'talks' } }]),
         sec('Open incidents', 'AlertTriangle', inc.map(i => ({ label: `${i.no} · ${i.kind}`, sub: `${i.status} · ${fmtDate(i.date)} · ${i.description}`, tone: i.severity === 'High' ? 'bad' : 'warn', to: i.jobId ? { ref: { type: 'job', id: i.jobId } } : i.employeeId ? { ref: { type: 'employee', id: i.employeeId } } : { page: 'safety' } }))),
         sec('Certs expiring', 'Award', certs.slice(0, 10).map(x => ({ label: `${fullName(byId(db.employees, x.employeeId))} · ${x.type}`, sub: certBand(x).band === 'expired' ? `Expired ${fmtDate(x.expires)}` : `Expires ${fmtDate(x.expires)}`, tone: certBand(x).band === 'expired' ? 'bad' : 'warn', to: { ref: { type: 'cert', id: x.id } } }))),
         sec('Inspections due', 'ClipboardCheck', insp.slice(0, 8).map(i => ({ label: `${i.kind}${i.unitId ? ` · ${byId(db.equipment, i.unitId)?.unit}` : i.itemId ? ` · ${byId(db.items, i.itemId)?.name}` : ''}`, sub: `Due ${fmtDate(i.due)}`, tone: i.due < t ? 'bad' : 'warn', to: i.unitId ? { ref: { type: 'equipment', id: i.unitId } } : i.itemId ? { ref: { type: 'item', id: i.itemId } } : { page: 'safety' } }))),
@@ -201,11 +211,16 @@ export function buildBriefing(db: T.DB, role: T.RoleKey, me: T.Employee | undefi
   if (role === 'accounting' || role === 'payroll') {
     if (role === 'payroll') {
       const sub = db.time.filter(x => x.status === 'Submitted'), flag = db.time.filter(x => x.status === 'Flagged')
-      return { title: 'Payroll', text: `${greet()}${name}. ${plural(sub.length, 'time entry', 'time entries')} waiting for approval and ${plural(flag.length, 'flagged entry', 'flagged entries')} to review before export.`, sections: [
+      const pay = overtimeByEntry(db), wk0 = startOfWeek(t), wk1 = addDays(wk0, 6), otBy = new Map<string, number>()
+      for (const x of db.time) { if (x.date < wk0 || x.date > wk1) continue; const s = pay.get(x.id); if (s) otBy.set(x.employeeId, (otBy.get(x.employeeId) ?? 0) + s.ot + s.dt) }
+      const hot = [...otBy.entries()].filter(([, h]) => h >= 0.5).sort((a, b) => b[1] - a[1]).slice(0, 8)
+      const otSec = hot.length ? [sec('Overtime this week', 'Clock', hot.map(([id, h]) => ({ label: `${fullName(byId(db.employees, id))} · ${h.toFixed(1)} h`, sub: ruleBlurb(ruleFor(payRulesOf(db), byId(db.employees, id))), tone: 'warn' as const, to: { page: 'time' as const }, testid: 'brief-ot' })))] : []
+      return { title: 'Payroll', text: `${greet()}${name}. ${plural(sub.length, 'time entry', 'time entries')} waiting for approval and ${plural(flag.length, 'flagged entry', 'flagged entries')} to review before export.${hot.length ? ` ${plural(hot.length, 'person')} already into overtime this week.` : ''}`, sections: [
         sec('Flagged time', 'AlertTriangle', flag.slice(0, 10).map(x => ({ label: `${fullName(byId(db.employees, x.employeeId))} · ${fmtDate(x.date)}`, sub: `${x.hours}h · ${x.note ?? x.activity}`, tone: 'bad', to: { ref: { type: 'time', id: x.id } } }))),
         sec('Address changes (tax)', 'MapPin', (db.infoChanges ?? []).filter(c => c.payroll && c.at > addDays(t, -14)).map(c => ({ label: `${fullName(byId(db.employees, c.employeeId))} · ${c.label}`, sub: c.to, tone: 'warn', to: { ref: { type: 'employee', id: c.employeeId } } } as BriefItem)), 'No address changes'),
         reconSec(),
         sec('Waiting approval', 'Clock', [{ label: `${sub.length} entries · ${sub.reduce((s, x) => s + x.hours, 0).toFixed(0)} hours`, sub: 'Approve in bulk', to: { page: 'time' } }]),
+        ...otSec,
       ] }
     }
     const coding = db.bills.filter(b => b.status === 'Needs Coding')

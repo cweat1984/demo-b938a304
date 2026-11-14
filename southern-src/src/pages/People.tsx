@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import Onboarding from '../launch2/Onboarding'
 import { useKeep } from '../lib/keep'
 import { toast } from 'sonner'
@@ -9,6 +9,7 @@ import { inScope, byId, fullName, workStatus, certBand } from '../data/logic'
 import { cn, fmtDate, today, addDays } from '../lib/util'
 import { PageHeader, Segmented, Badge, Button, Modal, Field, Card, Avatar, Progress, Empty, Toggle, CallButton } from '../components/ui'
 import { FlagMark } from '../components/Flag'
+import { WEEKLY_RULE_ID, cleanRule, payRulesOf, ruleBlurb } from '../data/payRules'
 
 const STEPS: [string, string][] = [['account', 'Company account & email'], ['profile', 'Profile & photo'], ['id', 'ID / I-9 / W-4'], ['emergency', 'Emergency contact'], ['sizes', 'Shirt & boot sizes'], ['training', 'Orientation & OSHA'], ['sds', 'SDS / Hazcom sign-off']]
 const OFFBOARD: [string, string][] = [['gear', 'Company gear / PPE returned'], ['cards', 'Fuel & company cards deactivated'], ['badge', 'Badge & keys returned'], ['accounts', 'Email / app accounts disabled'], ['pay', 'Final paycheck per state law (OK/TX)'], ['cobra', 'COBRA / benefits notice sent'], ['union', 'Union hall notified (if union)']] // dive2
@@ -26,19 +27,23 @@ export default function People() {
   const [newHire, setNewHire] = useState(false)
   const [rec, setRec] = useState(false)
   const [edit, setEdit] = useState<T.Employee | null>(null)
+  const [rulesOpen, setRulesOpen] = useState(false)
   const hr = role === 'hr' || role === 'owner'
+  const canPay = hr || role === 'payroll'
   const myId = useStore(s => s.session!.employeeId)
   // dive2: performance reviews only for HR/owner and the person's direct manager; other confidential records HR/owner only
   const canSeeRec = (r: T.HrRecord) => hr || (r.kind === 'Review' ? !!myId && byId(db.employees, r.employeeId)?.supervisorId === myId : !r.confidential)
   const people = useMemo(() => db.employees.filter(e => inScope(e, f) && (craft === 'All' || e.craft === craft) && (!vets || e.veteran) && (!q || `${e.first} ${e.last} ${e.empNo} ${e.craft} ${e.city}`.toLowerCase().includes(q.toLowerCase()))).sort((a, b) => a.last.localeCompare(b.last)), [db, f, craft, vets, q])
   const crafts = ['All', ...Array.from(new Set(db.employees.map(e => e.craft))).sort()]
-  const pending = db.pto.filter(p => p.status === 'Pending')
+  const onBranch = (empId?: string) => inScope(byId(db.employees, empId), f)
+  const pending = db.pto.filter(p => p.status === 'Pending' && onBranch(p.employeeId))
   const vetCount = db.employees.filter(e => inScope(e, f) && e.veteran).length
   return (
     <div className="max-w-[1400px] mx-auto">
-      <PageHeader eyebrow="HR" title="People" sub={`${db.employees.filter(e => inScope(e, f)).length} employees · ${db.hires.length} onboarding · ${pending.length} PTO requests · ${vetCount} veterans`} actions={hr && <>
-        <Button icon={<FileText className="size-4" />} onClick={() => setRec(true)}>Review / write-up</Button>
-        <Button variant="primary" icon={<UserPlus className="size-4" />} onClick={() => setNewHire(true)}>New hire</Button>
+      <PageHeader eyebrow="HR" title="People" sub={`${db.employees.filter(e => inScope(e, f)).length} employees · ${db.hires.length} onboarding · ${pending.length} PTO requests · ${vetCount} veterans`} actions={<>
+        {canPay && <Button data-testid="pay-rules-open" onClick={() => setRulesOpen(true)}>Pay rules</Button>}
+        {hr && <><Button icon={<FileText className="size-4" />} onClick={() => setRec(true)}>Review / write-up</Button>
+        <Button variant="primary" icon={<UserPlus className="size-4" />} onClick={() => setNewHire(true)}>New hire</Button></>}
       </>} />
       <Segmented className="mb-5" value={tab} onChange={setTab} options={[{ value: 'people', label: 'Directory' }, { value: 'onboarding', label: 'Onboarding', count: db.hires.length }, { value: 'pto', label: 'Time off', count: pending.length }, { value: 'records', label: 'Records' }]} />
       {tab === 'people' && <>
@@ -62,14 +67,14 @@ export default function People() {
           </div>) })}{!people.length && <Empty title="Nobody matches" />}</div>
       </>}
       {tab === 'onboarding' && <Onboarding embedded />}
-      {tab === 'pto' && <div className="card p-0 overflow-hidden">{[...pending, ...db.pto.filter(p => p.status !== 'Pending').slice(0, 20)].map(p => { const e = byId(db.employees, p.employeeId)!; const clash = db.assignments.filter(a => a.employeeId === e.id && a.date >= p.from && a.date <= p.to).length; return (
+      {tab === 'pto' && <div className="card p-0 overflow-hidden">{[...pending, ...db.pto.filter(p => p.status !== 'Pending' && onBranch(p.employeeId)).slice(0, 20)].map(p => { const e = byId(db.employees, p.employeeId)!; const clash = db.assignments.filter(a => a.employeeId === e.id && a.date >= p.from && a.date <= p.to).length; return (
         <div key={p.id} className="flex items-center gap-4 px-5 py-3 border-b hairline last:border-0">
           <Avatar name={fullName(e)} size={32} />
           <span className="flex-1 min-w-0"><span className="block font-semibold text-sm">{fullName(e)} · {p.kind}</span><span className="block text-xs text-muted">{fmtDate(p.from)} – {fmtDate(p.to)} · {p.hours}h{p.note ? ` · ${p.note}` : ''}</span></span>
           {clash > 0 && p.status === 'Pending' && <Badge tone="warn">On {clash} scheduled day{clash > 1 ? 's' : ''}</Badge>}
           {p.status === 'Pending' && hr ? <><Button size="sm" variant="ok" icon={<Check className="size-4" />} onClick={() => { actions.decidePto(p.id, 'Approved'); toast.success('Approved — Dispatch board updated') }}>Approve</Button><Button size="sm" variant="ghost" icon={<X className="size-4" />} onClick={() => actions.decidePto(p.id, 'Denied')}>Deny</Button></> : <Badge tone={p.status === 'Approved' ? 'ok' : p.status === 'Denied' ? 'bad' : 'info'}>{p.status}</Badge>}
         </div>) })}</div>}
-      {tab === 'records' && <div className="card p-0 overflow-hidden" data-testid="hr-records">{db.hrRecords.filter(canSeeRec).map(r => (
+      {tab === 'records' && <div className="card p-0 overflow-hidden" data-testid="hr-records">{db.hrRecords.filter(r => canSeeRec(r) && onBranch(r.employeeId)).map(r => (
         <div key={r.id} className="flex items-center gap-4 px-5 py-3 border-b hairline last:border-0">
           <Badge tone={r.kind === 'Write-Up' ? 'bad' : r.kind === 'Commendation' ? 'ok' : r.kind === 'Review' ? 'info' : 'neutral'}>{r.kind}</Badge>
           <span className="flex-1 min-w-0"><span className="block font-semibold text-sm truncate">{fullName(byId(db.employees, r.employeeId))} · {r.title}</span><span className="block text-xs text-muted truncate">{r.detail}</span></span>
@@ -80,6 +85,7 @@ export default function People() {
       <NewHire open={newHire} onClose={() => setNewHire(false)} />
       <NewRecord open={rec} onClose={() => setRec(false)} />
       <EditEmployee e={edit} onClose={() => setEdit(null)} />
+      <PayRules open={rulesOpen} onClose={() => setRulesOpen(false)} />
     </div>
   )
 }
@@ -136,6 +142,8 @@ function EditForm({ e, onClose }: { e: T.Employee; onClose: () => void }) {
   const [first, setFirst] = useState(e.first), [last, setLast] = useState(e.last), [craft, setCraft] = useState<T.Craft>(e.craft), [email, setEmail] = useState(e.email)
   const [vet, setVet] = useState(!!e.veteran), [branch, setBranch] = useState<T.ServiceBranch | ''>(e.veteran?.branch ?? ''), [years, setYears] = useState(String(e.veteran?.years ?? ''))
   const [lastDay, setLastDay] = useState(today()), [reason, setReason] = useState(''), [rehire, setRehire] = useState(true) // dive2
+  const [payRuleId, setPayRuleId] = useState(e.payRuleId || WEEKLY_RULE_ID)
+  const rules = payRulesOf(useStore(s => s.db))
   const separating = status === 'Inactive' && e.status !== 'Inactive'
   const live = useStore(s => s.db.employees.find(x => x.id === e.id)) ?? e
   return (
@@ -144,6 +152,7 @@ function EditForm({ e, onClose }: { e: T.Employee; onClose: () => void }) {
         <Field label="Role / craft"><select className="input" data-testid="emp-craft" value={craft} onChange={ev => setCraft(ev.target.value as T.Craft)}>{CRAFT_OPTS.map(c => <option key={c}>{c}</option>)}</select></Field><Field label="Email"><input className="input" data-testid="emp-email" value={email} onChange={ev => setEmail(ev.target.value)} /></Field></div>
       <div className="grid grid-cols-2 gap-3"><Field label="Phone"><input className="input" value={phone} onChange={ev => setPhone(ev.target.value)} /></Field><Field label="City"><input className="input" value={city} onChange={ev => setCity(ev.target.value)} /></Field></div>
       <Field label="Status"><select className="input" data-testid="emp-status" value={status} onChange={ev => setStatus(ev.target.value as T.Employee['status'])}>{['Active', 'Inactive', 'Pending Onboarding'].map(s => <option key={s}>{s}</option>)}</select></Field>
+      <Field label="Pay rule"><select className="input" data-testid="emp-pay-rule" value={payRuleId} onChange={ev => setPayRuleId(ev.target.value)}>{rules.map(r => <option key={r.id} value={r.id}>{r.name} — {ruleBlurb(r)}</option>)}</select></Field>
       {separating && <div className="rounded-2xl border border-bad/30 bg-bad/5 p-4 flex flex-col gap-3" data-testid="term-box"><div className="font-semibold text-sm">Separation</div>
         <div className="grid grid-cols-2 gap-3"><Field label="Last day worked"><input type="date" className="input" data-testid="term-last" value={lastDay} onChange={ev => setLastDay(ev.target.value)} /></Field>
           <Field label="Reason"><select className="input" data-testid="term-reason" value={reason} onChange={ev => setReason(ev.target.value)}><option value="">Pick…</option>{['Voluntary — quit / resigned', 'Voluntary — job abandonment (no call/no show)', 'Involuntary — performance', 'Involuntary — safety / policy violation', 'Involuntary — failed / refused drug test', 'Layoff — lack of work', 'End of temp / project', 'Retired', 'Deceased'].map(x => <option key={x}>{x}</option>)}</select></Field></div>
@@ -156,7 +165,37 @@ function EditForm({ e, onClose }: { e: T.Employee; onClose: () => void }) {
         <div className="flex items-center gap-2"><FlagMark width={20} /><Toggle checked={vet} onChange={setVet} label="Veteran" /></div>
         {vet && <div className="grid grid-cols-2 gap-3"><Field label="Branch of service (optional)"><select className="input" value={branch} onChange={ev => setBranch(ev.target.value as T.ServiceBranch)}><option value="">Prefer not to say</option>{SVC.map(s => <option key={s}>{s}</option>)}</select></Field><Field label="Years (optional)"><input className="input" inputMode="numeric" value={years} onChange={ev => setYears(ev.target.value.replace(/\D/g, ''))} /></Field></div>}
       </div>
-      <Button variant="primary" size="lg" data-testid="emp-save" disabled={separating && (!lastDay || !reason)} onClick={() => { actions.updateEmployee(e.id, { first: first.trim() || e.first, last: last.trim() || e.last, craft, email: email.trim(), phone, city, status: separating ? e.status : status, veteran: vet ? { branch: branch || undefined, years: years ? Number(years) : undefined } : undefined }); if (separating) { const n = actions.terminateEmployee(e.id, { lastDay, reason, rehire }); (lastDay > today() ? toast.success(`${e.first}’s separation scheduled`, { description: `Works through ${fmtDate(lastDay)} · removed from ${n} later day(s) · field access ends the day after` }) : toast.success(`${e.first} separated`, { description: `Removed from ${n} scheduled day(s) and their team · field access blocked` })) } else toast.success('Saved'); onClose() }}>{separating ? 'Save separation' : 'Save'}</Button>
+      <Button variant="primary" size="lg" data-testid="emp-save" disabled={separating && (!lastDay || !reason)} onClick={() => { actions.updateEmployee(e.id, { first: first.trim() || e.first, last: last.trim() || e.last, craft, email: email.trim(), phone, city, status: separating ? e.status : status, payRuleId, veteran: vet ? { branch: branch || undefined, years: years ? Number(years) : undefined } : undefined }); if (separating) { const n = actions.terminateEmployee(e.id, { lastDay, reason, rehire }); (lastDay > today() ? toast.success(`${e.first}’s separation scheduled`, { description: `Works through ${fmtDate(lastDay)} · removed from ${n} later day(s) · field access ends the day after` }) : toast.success(`${e.first} separated`, { description: `Removed from ${n} scheduled day(s) and their team · field access blocked` })) } else toast.success('Saved'); onClose() }}>{separating ? 'Save separation' : 'Save'}</Button>
     </div>
+  )
+}
+
+function PayRules({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const saved = payRulesOf(useStore(s => s.db))
+  const [rows, setRows] = useState(saved)
+  useEffect(() => { if (open) setRows(payRulesOf(useStore.getState().db)) }, [open])
+  const set = (id: string, patch: Partial<T.PayRule>) => setRows(rows.map(r => r.id === id ? { ...r, ...patch } : r))
+  return (
+    <Modal open={open} onClose={onClose} title="Pay rules" sub="Everyone starts on weekly overtime. A person’s rule is on their HR record. The highest multiplier that applies to an hour is the one that is paid.">
+      <div className="flex flex-col gap-3" data-testid="pay-rules">
+        {rows.map(r => (
+          <div key={r.id} className="rounded-2xl border hairline p-3 grid grid-cols-2 gap-2" data-testid="pay-rule-row">
+            <Field label="Name"><input className="input" value={r.name} onChange={e => set(r.id, { name: e.target.value })} /></Field>
+            <Field label="Kind"><select className="input" value={r.kind} onChange={e => set(r.id, { kind: e.target.value as T.PayRule['kind'] })}><option value="weekly">Weekly</option><option value="daily">Daily</option></select></Field>
+            <Field label={r.kind === 'weekly' ? 'Overtime after (hours in the week)' : 'Overtime after (hours in the day)'}><input className="input num" inputMode="decimal" value={r.otAfter} onChange={e => set(r.id, { otAfter: Number(e.target.value) })} /></Field>
+            <Field label="Overtime ×"><input className="input num" inputMode="decimal" value={r.otMult} onChange={e => set(r.id, { otMult: Number(e.target.value) })} /></Field>
+            {r.kind === 'daily' && <Field label="Saturday ×"><input className="input num" inputMode="decimal" value={r.satMult} onChange={e => set(r.id, { satMult: Number(e.target.value) })} /></Field>}
+            {r.kind === 'daily' && <Field label="Sunday ×"><input className="input num" inputMode="decimal" value={r.sunMult} onChange={e => set(r.id, { sunMult: Number(e.target.value) })} /></Field>}
+            <Field label="Double time ×"><input className="input num" inputMode="decimal" value={r.dtMult} onChange={e => set(r.id, { dtMult: Number(e.target.value) })} /></Field>
+            <div className="text-xs text-muted self-end">{ruleBlurb(cleanRule(r))}</div>
+          </div>
+        ))}
+        <div className="flex flex-wrap gap-2">
+          <Button onClick={() => setRows([...rows, cleanRule({ id: 'pay-' + Math.random().toString(36).slice(2, 8), name: 'New daily rule', kind: 'daily', otAfter: 8, otMult: 1.5, satMult: 1.5, sunMult: 2, dtMult: 2 })])}>Add a rule</Button>
+          <Button variant="primary" data-testid="pay-rules-save" onClick={() => { rows.forEach(r => actions.savePayRule(r)); toast.success('Pay rules saved'); onClose() }}>Save rules</Button>
+        </div>
+        <p className="text-xs text-muted">The built-in weekly rule stays available so existing people keep weekly overtime until someone changes them. Saturday overtime and Sunday double time apply only on a daily rule. A job or site can still pay double time after its own number of hours.</p>
+      </div>
+    </Modal>
   )
 }

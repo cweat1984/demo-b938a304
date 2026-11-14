@@ -1,6 +1,8 @@
 // Union payroll rules: job county → IUOE local → scale; job rate profiles apply only while a worker is on that job.
 import type * as T from '../data/types'
 import { countyOfJobTurbine } from './turbine'
+import { payRulesOf, ruleFor, splitOne } from '../data/payRules'
+import { startOfWeek } from '../lib/util'
 
 export interface URate { c: string; cr: boolean; oi: boolean; b: number; f: number | null; ft: string; eff: string; ct: string; wd: string; u: string; n: number; st: string; co: string[] }
 export interface ULocal { local: number | string; name: string; designation: string; hq_city: string | null; hq_state: string | null; website: string | null; offices: { city: string; state: string; phone: string }[]; counties: [string, string][]; rates: URate[]; cba: Record<string, unknown>; pri: boolean; nr: number }
@@ -53,9 +55,8 @@ export function cleanProfile(p: RateProfile): RateProfile {
 
 /** Compute every time entry for one employee in date order so weekly OT (>40) is applied correctly. */
 export function computeEmployee(db: T.DB, all: ULocal[], profiles: Record<string, RateProfile>, emp: T.Employee, entries: T.TimeEntry[], classOv?: UClass): Calc[] {
-  const weekKey = (d: string) => { const x = new Date(d + 'T12:00:00'); x.setDate(x.getDate() - x.getDay()); return x.toISOString().slice(0, 10) }
   const wk: Record<string, number> = {}
-  const dayH: Record<string, number> = {}, dayTotal: Record<string, number> = {}, paid = new Set<string>()
+  const dayH: Record<string, number> = {}, siteH: Record<string, number> = {}, dayTotal: Record<string, number> = {}, paid = new Set<string>()
   entries.forEach(t => { dayTotal[t.date] = (dayTotal[t.date] ?? 0) + Math.max(0, t.hours) })
   return [...entries].sort((a, b) => a.date.localeCompare(b.date) || a.start.localeCompare(b.start)).map(entry => {
     const job = db.jobs.find(j => j.id === entry.jobId)
@@ -77,17 +78,21 @@ export function computeEmployee(db: T.DB, all: ULocal[], profiles: Record<string
     if (night) cands2.push({ r: profile!.night!, label: 'Job profile night wage' })
     const win = cands2.reduce((a, b) => b.r > a.r ? b : a)
     const hrs = Math.max(0, entry.hours) // negative hours never reduce the week
-    const k = weekKey(entry.date), before = wk[k] ?? 0
-    // double time (when the job profile sets it): hours past dtAfter in one day, across split entries
-    const d0 = dayH[entry.date] ?? 0, dtAt = profile?.dtMult && profile.dtAfter ? profile.dtAfter : Infinity
-    const dtHrs = Math.max(0, Math.min(hrs, d0 + hrs - dtAt)); dayH[entry.date] = d0 + hrs
-    const rest = hrs - dtHrs
-    const stHrs = Math.max(0, Math.min(rest, 40 - before)), otHrs = rest - stHrs
+    const rule = ruleFor(payRulesOf(db), emp)
+    const k = startOfWeek(entry.date), before = wk[k] ?? 0
+    const d0 = dayH[entry.date] ?? 0
+    const siteKey = `${entry.date}|${entry.jobId ?? ''}`
+    const s0 = siteH[siteKey] ?? 0
+    const dtAt = profile?.dtAfter
+    const slice = splitOne({ date: entry.date, hours: hrs, dayBefore: d0, weekBefore: before, siteBefore: s0, rule, dtAfter: dtAt, otMult: profile?.otMult, dtMult: dtAt ? profile?.dtMult : undefined })
+    dayH[entry.date] = d0 + hrs
     wk[k] = before + hrs
-    const ot = profile?.otMult ?? 1.5, floor = Math.max(win.r, emp.rate) // never below the assigned rate, on any line
+    if (dtAt) siteH[siteKey] = s0 + hrs
+    const stHrs = slice.reg, otHrs = slice.ot, dtHrs = slice.dt
+    const ot = slice.otMult, floor = Math.max(win.r, emp.rate) // never below the assigned rate, on any line
     const lines: Line[] = [{ label: 'Straight time', qty: stHrs, rate: floor, amount: stHrs * floor, why: win.label }]
-    if (otHrs > 0) lines.push({ label: `Overtime ×${ot}`, qty: otHrs, rate: floor * ot, amount: otHrs * floor * ot, why: `Week over 40 h${profile ? ' · job profile multiplier' : ' · default 1.5×'}` })
-    if (dtHrs > 0) lines.push({ label: `Double time ×${profile!.dtMult}`, qty: dtHrs, rate: floor * profile!.dtMult, amount: dtHrs * floor * profile!.dtMult, why: `Over ${dtAt} h in the day · job profile` })
+    if (otHrs > 0) lines.push({ label: `Overtime ×${ot}`, qty: otHrs, rate: floor * ot, amount: otHrs * floor * ot, why: rule.kind === 'daily' ? `Daily rule · after ${rule.otAfter} h or Saturday${profile ? ' · job profile multiplier' : ''}` : `Week over ${rule.otAfter} h${profile ? ' · job profile multiplier' : ' · default 1.5×'}` })
+    if (dtHrs > 0) lines.push({ label: `Double time ×${slice.dtMult}`, qty: dtHrs, rate: floor * slice.dtMult, amount: dtHrs * floor * slice.dtMult, why: new Date(entry.date + 'T12:00:00').getDay() === 0 && !(dtAt && s0 + hrs > dtAt) ? 'Sunday double time' : `Over ${dtAt ?? rule.otAfter} h in the day · job profile` })
     const once = (key: string) => (paid.has(key) ? false : (paid.add(key), true))
     if (profile) {
       if (profile.travelRate && profile.travelHrs && once(`${entry.date}|travel|${job?.id}`)) { const tr = Math.max(profile.travelRate, emp.rate); lines.push({ label: 'Travel time', qty: profile.travelHrs, rate: tr, amount: profile.travelHrs * tr, why: 'Job profile' }) }

@@ -21,8 +21,21 @@ import { CustRef, EqRef, SiteRef } from '../components/bits'
 export function repriced(j: T.Job, price: number): Pick<T.Job, 'dayRate' | 'quote'> {
   const mob = j.quote.mobDemob, days = Math.max(1, diffDays(j.endDate, j.startDate) + 1)
   const dayRate = Math.max(0, Math.round(((price - mob) / days) * 100) / 100), f = j.dayRate ? dayRate / j.dayRate : 1
-  const priceLines = j.quote.priceLines?.map(l => /Mobilization/.test(l.k) ? l : { ...l, v: Math.round(l.v * f * 100) / 100 })
-  return { dayRate, quote: { ...j.quote, revenue: price, ...(priceLines ? { priceLines } : {}) } }
+  // The leftover cents that a single day rate cannot express sit on mob, so day rate × days + mob equals the accepted price.
+  const mobDemob = Math.round((price - dayRate * days) * 100) / 100
+  const priceLines = j.quote.priceLines?.map(l => /Mobilization/.test(l.k) ? { ...l, v: mobDemob } : { ...l, v: Math.round(l.v * f * 100) / 100 })
+  return { dayRate, quote: { ...j.quote, revenue: price, mobDemob, ...(priceLines ? { priceLines } : {}) } }
+}
+function fitDollars<X extends { v: number }>(parts: X[], total: number): X[] {
+  if (!parts.length) return parts
+  const s = parts.reduce((a, x) => a + x.v, 0) || 1
+  const out = parts.map(x => ({ ...x, v: Math.round((x.v / s) * total) }))
+  const drift = total - out.reduce((a, x) => a + x.v, 0)
+  if (!drift) return out
+  let i = 0
+  out.forEach((x, k) => { if (Math.abs(x.v) > Math.abs(out[i].v)) i = k })
+  out[i] = { ...out[i], v: out[i].v + drift }
+  return out
 }
 export function quoteLines(db: T.DB, j: T.Job) {
   const days = diffDays(j.endDate, j.startDate) + 1
@@ -38,11 +51,10 @@ export function quoteLines(db: T.DB, j: T.Job) {
   ].filter(x => x.v > 0)
   // dive3 M6/M8: jobs built since dive3 carry their own itemized price & cost (every crane) — use them as stored
   if (j.quote.priceLines?.length) {
-    const cl = j.quote.costLines ?? [], cs = cl.reduce((s, x) => s + x.v, 0) || 1
-    return { days, crane, cost: cl.map(x => ({ ...x, v: Math.round((x.v / cs) * j.quote.costBudget) })), price: j.quote.priceLines, margin: (j.quote.revenue - j.quote.costBudget) / (j.quote.revenue || 1) }
+    const cl = j.quote.costLines ?? []
+    return { days, crane, cost: fitDollars(cl, j.quote.costBudget), price: j.quote.priceLines, margin: (j.quote.revenue - j.quote.costBudget) / (j.quote.revenue || 1) }
   }
-  const rs = rawCost.reduce((s, x) => s + x.v, 0) || 1
-  const cost = rawCost.map(x => ({ ...x, v: Math.round((x.v / rs) * j.quote.costBudget) }))
+  const cost = fitDollars(rawCost, j.quote.costBudget)
   const billedMob = j.quote.mobDemob
   const craneRental = crane ? Math.max(0, j.quote.revenue - billedMob - crew * days * 10.5 * 95) : 0
   const labor = j.quote.revenue - billedMob - craneRental
@@ -62,8 +74,9 @@ export default function Quotes() {
   const [sel, setSel] = useState<string | null>(null)
   const all = db.jobs.filter(j => inScope(j, f))
   const open = all.filter(j => j.stage === 'Quote' && !j.quoteLost).sort((a, b) => a.startDate.localeCompare(b.startDate))
-  const won = all.filter(j => j.stage !== 'Quote' && !j.closedOut && j.quote.quotedAt >= today().slice(0, 4) + '-01-01').sort((a, b) => b.quote.quotedAt.localeCompare(a.quote.quotedAt))
-  const lost = all.filter(j => j.quoteLost)
+  const y0 = today().slice(0, 4) + '-01-01'
+  const won = all.filter(j => j.stage !== 'Quote' && !j.quoteLost && j.quote.quotedAt >= y0).sort((a, b) => b.quote.quotedAt.localeCompare(a.quote.quotedAt))
+  const lost = all.filter(j => j.quoteLost && j.quoteLost.at >= y0)
   const pipe = open.reduce((s, j) => s + j.quote.revenue, 0)
   // real ratio: quotes won ÷ quotes decided (won + lost) — no padding
   const winRate = won.length / Math.max(1, won.length + lost.length)

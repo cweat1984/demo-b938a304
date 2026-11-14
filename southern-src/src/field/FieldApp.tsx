@@ -85,11 +85,15 @@ export default function FieldApp() {
       return
     }
     const id = pushOverlay(() => {
-      tabIds.current.pop()
-      tabHist.current.pop()
-      const prev = tabHist.current[tabHist.current.length - 1] ?? 'home'
+      tabIds.current = tabIds.current.filter(x => x !== id)
+      const i = tabHist.current.lastIndexOf(k)
+      if (i > 0) tabHist.current.splice(i, 1)
       if (!tabHist.current.length) tabHist.current = ['home']
-      setTabRaw(prev)
+      setTabRaw(tabHist.current[tabHist.current.length - 1] ?? 'home')
+    }, () => {
+      if (!tabIds.current.includes(id)) tabIds.current.push(id)
+      if (tabHist.current[tabHist.current.length - 1] !== k) tabHist.current.push(k)
+      setTabRaw(k)
     })
     tabIds.current.push(id)
     tabHist.current.push(k)

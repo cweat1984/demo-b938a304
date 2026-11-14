@@ -8,6 +8,8 @@ import { byId, fullName } from '../data/logic'
 import { today, cn } from '../lib/util'
 import { buildBriefing, type BriefItem, type BriefTo } from '../data/briefing'
 import { useCompany } from '../data/brand'
+import BriefVoiceButton, { useBriefSpeech } from './BriefVoice'
+import { stopBriefingSpeech } from '../lib/briefVoice'
 import { SdsSheet } from './inv/Sds'
 import FleetMap from './FleetMap'
 
@@ -27,15 +29,16 @@ export default function RoleBriefing({ role, onItem, compact }: { role: T.RoleKe
   const [typed, setTyped] = useState('')
   const [sds, setSds] = useState<string | null>(null)
   const iv = useRef<number | undefined>(undefined)
-  useEffect(() => () => { window.clearInterval(iv.current); try { window.speechSynthesis?.cancel() } catch { /* */ } }, [])
+  const speech = useBriefSpeech()
+  useEffect(() => () => { window.clearInterval(iv.current); stopBriefingSpeech() }, [])
   const dismissOffer = () => { setOffer(false); try { localStorage.setItem(key, '1') } catch { /* */ } }
   const play = () => {
     dismissOffer(); setShown(true); setPlaying(true); setTyped('')
     let i = 0; window.clearInterval(iv.current)
-    iv.current = window.setInterval(() => { i += 2; setTyped(brief.text.slice(0, i)); if (i >= brief.text.length) { window.clearInterval(iv.current); setPlaying(false) } }, 24)
-    try { if ('speechSynthesis' in window) { const u = new SpeechSynthesisUtterance(brief.text); u.rate = 1.02; window.speechSynthesis.cancel(); window.speechSynthesis.speak(u) } } catch { /* no voice */ }
+    iv.current = window.setInterval(() => { i += 2; setTyped(brief.text.slice(0, i)); if (i >= brief.text.length) window.clearInterval(iv.current) }, 24)
+    speech.speak(brief.text, () => setPlaying(false))
   }
-  const stop = () => { window.clearInterval(iv.current); setTyped(brief.text); setPlaying(false); try { window.speechSynthesis?.cancel() } catch { /* */ } }
+  const stop = () => { window.clearInterval(iv.current); setTyped(brief.text); setPlaying(false); speech.stop() }
   const close = () => { stop(); setShown(false) }
   const go = (to?: BriefTo) => {
     if (!to) return
@@ -56,19 +59,21 @@ export default function RoleBriefing({ role, onItem, compact }: { role: T.RoleKe
           <span className="grid size-11 shrink-0 place-items-center rounded-full bg-accent text-accent-ink"><Sparkles className="size-5" /></span>
           <div className="flex-1 min-w-0"><div className="font-semibold">Your {new Date().getHours() < 12 ? 'morning' : 'daily'} briefing is ready</div><div className="text-sm text-muted truncate">{count} things for today{urgent ? ` · ${urgent} need you` : ''} · about a minute</div></div>
           <button onClick={dismissOffer} className="text-sm text-muted hover:text-ink hidden sm:block">Not now</button>
+          <BriefVoiceButton speech={speech} />
           <button onClick={play} className="h-11 px-5 rounded-full bg-accent text-accent-ink font-semibold inline-flex items-center gap-2 press" data-testid="role-briefing-btn"><Play className="size-4" />Play</button>
         </motion.div>
       ) : (
-        <button onClick={play} className="self-start h-11 px-5 rounded-full border hairline bg-surface hover:bg-surface-2 font-semibold inline-flex items-center gap-2 press text-sm" data-testid="role-briefing-btn"><Play className="size-4 text-accent" />{new Date().getHours() < 12 ? 'Morning' : 'Daily'} briefing{urgent ? <span className="ml-1 rounded-full bg-bad-solid text-white text-[11px] px-2 h-5 inline-flex items-center">{urgent}</span> : null}</button>
+        <span className="self-start inline-flex items-center gap-1"><button onClick={play} className="h-11 px-5 rounded-full border hairline bg-surface hover:bg-surface-2 font-semibold inline-flex items-center gap-2 press text-sm" data-testid="role-briefing-btn"><Play className="size-4 text-accent" />{new Date().getHours() < 12 ? 'Morning' : 'Daily'} briefing{urgent ? <span className="ml-1 rounded-full bg-bad-solid text-white text-[11px] px-2 h-5 inline-flex items-center">{urgent}</span> : null}</button><BriefVoiceButton speech={speech} /></span>
       ))}
       <AnimatePresence>{shown && (
         <motion.div initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} className="card p-4 sm:p-5 flex flex-col gap-4 accent-glow border-accent/40" data-testid="role-briefing-card">
           <div className="flex items-start gap-4">
             <span className="grid size-10 shrink-0 place-items-center rounded-full bg-accent text-accent-ink"><Sparkles className="size-5" /></span>
             <div className="flex-1 min-w-0"><div className="label mb-1">Ask {company.assistantName} · {brief.title} briefing</div><div className="text-lg leading-snug" data-testid="briefing-text">{typed}{playing && <span className="blink">▍</span>}</div></div>
-            <div className="flex gap-1">{playing ? <button onClick={stop} className="size-9 grid place-items-center rounded-full hover:bg-surface-2" aria-label="Stop"><Square className="size-4" /></button> : <button onClick={play} className="size-9 grid place-items-center rounded-full hover:bg-surface-2" aria-label="Replay"><Play className="size-4" /></button>}<button onClick={close} className="size-9 grid place-items-center rounded-full hover:bg-surface-2" aria-label="Close"><X className="size-4" /></button></div>
+            <div className="flex gap-1"><BriefVoiceButton speech={speech} />{playing ? <button onClick={stop} className="size-[44px] grid place-items-center rounded-full hover:bg-surface-2" aria-label="Stop" data-testid="briefing-stop"><Square className="size-4" /></button> : <button onClick={play} className="size-[44px] grid place-items-center rounded-full hover:bg-surface-2" aria-label="Replay"><Play className="size-4" /></button>}<button onClick={close} className="size-[44px] grid place-items-center rounded-full hover:bg-surface-2" aria-label="Close"><X className="size-4" /></button></div>
           </div>
           {brief.map && <div className="rounded-2xl overflow-hidden border hairline isolate"><FleetMap units={[]} branches={false} height={170} center={[brief.map.lat, brief.map.lng]} zoom={11} sites={[{ lat: brief.map.lat, lng: brief.map.lng, label: brief.map.label }]} /></div>}
+          {speech.loaded && speech.hasSpeech && !speech.resolved.voice && <p className="text-xs text-muted" data-testid="brief-spoken-fallback">Spoken voice isn’t available on this browser. The words stay on screen.</p>}
           <div className={cn('grid gap-3', !compact && 'md:grid-cols-2 xl:grid-cols-3')}>
             {brief.sections.map(s => { const I = ((Icons as unknown as Record<string, Icons.LucideIcon>)[s.icon] ?? Icons.Circle); return (
               <div key={s.title} className="rounded-2xl bg-surface-2/60 p-3" data-testid="brief-section">

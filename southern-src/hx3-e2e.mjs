@@ -12,7 +12,10 @@ for (const [name, br, opts] of [['desk1920', cr, { viewport: { width: 1920, heig
   const add = card.locator('[data-testid=board-extra-add]'); ok(await add.count() === 1, `${name}: job card has a ± Extra button`)
   const bb = await add.boundingBox(); if (opts.hasTouch || opts.isMobile) ok(bb && bb.height >= 44, `${name}: ± Extra is a 44px touch target (${Math.round(bb?.height ?? 0)})`)
   await tap(p, add); await p.waitForSelector('[data-testid=board-extra-sheet]')
-  await tap(p, '[data-testid=board-extra-pick][data-role=Rigger]'); await W(400); await tap(p, '[data-testid=board-extra-pick][data-role="Light tower"]'); await W(400)
+  await tap(p, '[data-testid=board-extra-pick][data-role=Rigger]')
+  await p.locator('[data-testid=board-extra-row]').nth(0).waitFor({ timeout: 8000 })
+  await tap(p, '[data-testid=board-extra-pick][data-role="Light tower"]')
+  await p.locator('[data-testid=board-extra-row]').nth(1).waitFor({ timeout: 8000 })
   ok(await p.locator('[data-testid=board-extra-row]').count() >= 2, `${name}: one tap per extra — rigger and light tower on this day`)
   await p.screenshot({ path: out + name + '-board-extra-sheet.png' }); await p.keyboard.press('Escape'); await W(400)
   if (await p.locator('[data-testid=board-extra-sheet]').count()) { await p.locator('[aria-label=Close]').first().click().catch(() => {}); await W(300) }

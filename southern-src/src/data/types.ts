@@ -28,6 +28,8 @@ export interface Employee extends Org {
   status: 'Active' | 'Inactive' | 'Pending Onboarding'
   perDiemBlocked: PerDiem[]
   rate: number // hourly pay rate (demo)
+  /** Which row of db.payRules this person is paid under. Missing means the weekly rule. */
+  payRuleId?: string
   hireDate: string
   city: string
   shirt?: string
@@ -114,7 +116,7 @@ export interface CraneConfig {
 }
 
 export interface Customer { id: string; name: string; contact: string; phone: string; industry: string }
-export interface Site { travelEach?: number; id: string; name: string; city: string; state: string; lat: number; lng: number; gate?: string; hospital?: string; windFarmId?: string }
+export interface Site { travelEach?: number; id: string; name: string; city: string; state: string; lat: number; lng: number; gate?: string; hospital?: string; windFarmId?: string; /** Hours on this site in one calendar day after which the rest is double time. A job can override it. */ dtAfter?: number }
 
 /** Turbine attached to a job — USWTDB case_id plus the site's own number (e.g. T-18). */
 export interface JobTurbine { caseId: number; faaOrs?: string; label?: string; lat: number; lng: number; model?: string; hh?: number | null; /** Census county from the turbine's own lat/lon */ county?: string; countySt?: string }
@@ -204,6 +206,10 @@ export interface Job extends Org {
   closedOut?: boolean
   /** Paid travel allowance each way (hours) — overrides site/branch rule. */
   travelEach?: number
+  /** Hours on this job in one calendar day after which the rest is double time. Overrides the site. */
+  dtAfter?: number
+  /** When set, signed timecard overtime and double time are extra invoice lines on top of the day rate. */
+  billOt?: boolean
   quoteLost?: { at: string; reason: string; note?: string }
   quoteSentAt?: string
   lift?: { load: number; radius: number; boom: number; rigging: number; notes?: string }
@@ -581,8 +587,22 @@ export interface CompanyProfile {
   modules: { craneRigging: boolean; /** Req H: field crews may call off support equipment (default OFF). */ fieldCalloff?: boolean }
 }
 
+/** One pay rule. Weekly: overtime after otAfter hours in the Monday–Sunday week. Daily: overtime after otAfter hours in the calendar day, Saturday at satMult, Sunday at sunMult. A job or site can add double time after its own daily hours; the higher multiplier wins for that hour. */
+export interface PayRule {
+  id: string
+  name: string
+  kind: 'weekly' | 'daily'
+  otAfter: number
+  otMult: number
+  satMult: number
+  sunMult: number
+  dtMult: number
+}
+
 export interface DB {
   version: number
+  /** Company pay rules. People point at one by payRuleId. Missing rows are filled with the weekly and daily defaults. */
+  payRules?: PayRule[]
   /** Tenant / company id — single tenant today; scopes every record in a multi-company backend. */
   tenantId?: string
   company?: CompanyProfile

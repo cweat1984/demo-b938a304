@@ -23,7 +23,7 @@ export const SCHED_PATTERNS: Record<SchedCat, Pattern> = { working: 'none', movi
 /** Hue (0–360) and saturation (0–1) of a hex color. */
 export function hsl(hex: string) { const [r, g, b] = hexToRgb(hex).map(v => v / 255); const mx = Math.max(r, g, b), mn = Math.min(r, g, b), l = (mx + mn) / 2, d = mx - mn
   if (!d) return { h: 0, s: 0, l }; const s = d / (1 - Math.abs(2 * l - 1)); let h = mx === r ? ((g - b) / d) % 6 : mx === g ? (b - r) / d + 2 : (r - g) / d + 4; h *= 60; if (h < 0) h += 360; return { h, s, l } }
-export const isReddish = (hex: string) => { const { h, s, l } = hsl(hex); return (h >= 340 || h <= 25) && s >= 0.3 && l > 0.12 && l < 0.88 }
+export const isReddish = (hex: string) => { const { h, s, l } = hsl(hex); return (h >= 340 || h <= 25) && s >= 0.3 && l > 0.12 && l < 0.97 }
 /** CIE76 ΔE between two colours (≥ 15 reads as clearly different on a projector). */
 export function deltaE(a: string, b: string) {
   const lab = (hex: string) => { const [r, g, bl] = hexToRgb(hex).map(v => { v /= 255; return v > 0.04045 ? ((v + 0.055) / 1.055) ** 2.4 : v / 12.92 })

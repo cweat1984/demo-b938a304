@@ -12,7 +12,8 @@ if (!(await p.textContent('body')).includes('Southern Lifting & Hoisting')) fail
 if (!(await p.title()).startsWith('Southern Command')) fail('title ' + await p.title())
 await p.click('[data-role="owner"]'); await p.waitForTimeout(700)
 const aside = await p.textContent('aside')
-if (!/Southern Command/.test(aside) || !/SLH · Oklahoma City/i.test(aside)) fail('sidebar brand: ' + aside.slice(0, 80))
+// Owner is company-wide and opens on All branches. The sidebar shows that scope, not a single city.
+if (!/Southern Command/.test(aside) || !/SLH · All branches/i.test(aside)) fail('sidebar brand: ' + aside.slice(0, 80))
 if (!(await p.textContent('header, body')).includes('Ask Southern')) fail('ask placeholder')
 await p.evaluate(() => { location.hash = '/settings' }); await p.waitForTimeout(400)
 await p.getByRole('tab', { name: 'Company & branches' }).click(); await p.waitForSelector('[data-testid="company-profile"]')
@@ -39,3 +40,4 @@ await p.goto(base + '?status=10125'); await p.waitForSelector('[data-testid=cust
 console.log('crane tabs off:', nav.length, 'on:', nav2.join(', '))
 console.log(errors.length ? 'ERRORS:\n' + [...new Set(errors)].join('\n') : 'no errors')
 await browser.close()
+process.exit(errors.length ? 1 : 0)

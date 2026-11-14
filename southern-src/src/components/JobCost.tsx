@@ -2,9 +2,10 @@ import Linkify from './Linkify'
 import { useMemo, useState } from 'react'
 import { TrendingUp, TrendingDown, Minus, Plus, Zap } from 'lucide-react'
 import type * as T from '../data/types'
-import { useStore, actions } from '../data/store'
+import { useStore, actions, BILL_MAX } from '../data/store'
+import { parseNum } from '../lib/num'
 import { jobCosting, COST_CATS, HEALTH_LABEL } from '../data/logic'
-import { money, fmtDate, cn, today, moneyHidden } from '../lib/util'
+import { money, money2, fmtDate, cn, today, moneyHidden } from '../lib/util'
 import { Badge, Button, Collapsible, Field, Modal } from './ui'
 import { HBar } from './charts'
 import { toast } from 'sonner'
@@ -63,7 +64,7 @@ export default function JobCostPanel({ job }: { job: T.Job }) {
           {COST_CATS.filter(k => c.lines.some(l => l.category === k && (group === 'all' || (group === 'one') === !!l.oneTime))).sort((a, b) => c.byCat[b] - c.byCat[a]).map(k => {
             const lines = c.lines.filter(l => l.category === k && (group === 'all' || (group === 'one') === !!l.oneTime))
             return (
-              <Collapsible key={k} title={<span className="flex items-center gap-3 w-full"><span className="w-40 shrink-0">{k}</span><span className="flex-1 hidden sm:block"><HBar value={c.byCat[k]} max={maxCat} /></span></span>} right={<span className="num text-sm font-semibold w-24 text-right">{money(c.byCat[k])}</span>} count={lines.length}>
+              <Collapsible key={k} title={<span className="flex items-center gap-3 w-full"><span className="w-40 shrink-0">{k}</span><span className="flex-1 hidden sm:block"><HBar value={c.byCat[k]} max={maxCat} /></span></span>} right={<span className="num text-sm font-semibold w-24 text-right">{money2(c.byCat[k])}</span>} count={lines.length}>
                 <div className="flex flex-col">
                   {lines.slice(0, 40).map((l, i) => (
                     <div key={i} className="flex items-center gap-3 py-1.5 text-[13px] border-b hairline last:border-0">
@@ -71,7 +72,7 @@ export default function JobCostPanel({ job }: { job: T.Job }) {
                       <span className="flex-1 min-w-0 truncate"><Linkify text={l.description} /></span>
                       {l.oneTime && <Badge>One-time</Badge>}
                       {l.refId && (l.source === 'Time Entry' || l.source === 'Per Diem' || l.source === 'Vendor Bill') ? <button className="ref-link" onClick={() => useStore.getState().open(l.source === 'Vendor Bill' ? { type: 'bill', id: l.refId! } : { type: 'time', id: l.refId! })}><Badge tone={SRC_TONE[l.source]}>{l.source} →</Badge></button> : <Badge tone={SRC_TONE[l.source]}>{l.source}</Badge>}
-                      <span className="num w-20 text-right">{money(l.amount)}</span>
+                      <span className="num w-20 text-right">{money2(l.amount)}</span>
                     </div>
                   ))}
                   {lines.length > 40 && <div className="text-xs text-muted pt-2">+{lines.length - 40} more lines</div>}
@@ -92,13 +93,14 @@ function AddCost({ open, onClose, job }: { open: boolean; onClose: () => void; j
   const [desc, setDesc] = useState('')
   const [amt, setAmt] = useState('')
   const name = useStore(s => s.session?.name ?? '')
+  const parsed = parseNum(amt, { cents: true, min: 0.01, max: BILL_MAX, label: 'Amount' })
   return (
     <Modal open={open} onClose={onClose} title={`Post cost to Job #${job.jobNo}`} sub="For costs that don’t come from time, fuel, equipment or a vendor bill.">
       <div className="flex flex-col gap-3">
         <Field label="Category"><select className="input" value={cat} onChange={e => setCat(e.target.value as T.CostCategory)}>{COST_CATS.map(c => <option key={c}>{c}</option>)}</select></Field>
         <Field label="Description"><input className="input" value={desc} onChange={e => setDesc(e.target.value)} placeholder="e.g. City street-use permit" /></Field>
-        <Field label="Amount ($)"><input className="input num" inputMode="decimal" value={amt} onChange={e => setAmt(e.target.value.replace(/[^0-9.]/g, ''))} /></Field>
-        <Button variant="primary" size="lg" disabled={!desc || !Number(amt)} onClick={() => { actions.addCost({ jobId: job.id, date: today(), category: cat, description: desc, amount: Number(amt), source: 'Manual', by: name }); toast.success('Posted to job cost'); setDesc(''); setAmt(''); onClose() }}>Post cost</Button>
+        <Field label="Amount ($)" hint={amt.trim() && !parsed.ok ? <span className="text-bad">{parsed.msg}</span> : undefined}><input className="input num" inputMode="decimal" value={amt} onChange={e => setAmt(e.target.value.replace(/[^0-9.]/g, ''))} /></Field>
+        <Button variant="primary" size="lg" disabled={!desc || !amt.trim()} onClick={() => { if (!parsed.ok) { toast.error(parsed.msg); return } const r = actions.addCost({ jobId: job.id, date: today(), category: cat, description: desc, amount: parsed.n, source: 'Manual', by: name }); if (!r.ok) { toast.error(r.reason); return } toast.success('Posted to job cost'); setDesc(''); setAmt(''); onClose() }}>Post cost</Button>
       </div>
     </Modal>
   )

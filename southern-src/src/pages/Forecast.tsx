@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { jobCranes, busyWindow, craneClashDay, sharedOn, phaseOn, PHASE_LABEL, type RigPhase } from '../data/rig'
+import { jobCranes, busyWindow, craneClashDay, sharedOn, phaseOn, planFor, rigWindow, PHASE_LABEL, type RigPhase } from '../data/rig'
 import { useStore } from '../data/store'
 import { inScope, isLive, customerOf, byId } from '../data/logic'
 import { today, addDays, range, dow, cn, fmtDate, diffDays } from '../lib/util'
@@ -29,7 +29,7 @@ export default function Forecast() {
   const cranes = db.equipment.filter(e => e.category === 'Crane' && inScope(e, f)).sort((a, b) => (b.capacity ?? 0) - (a.capacity ?? 0))
   const jobs = useMemo(() => db.jobs.filter(j => (isLive(j) || j.stage === 'Awarded') && jobCranes(j).length && j.status !== 'Complete'), [db.jobs])
   // one booking per crane per job, stretched over move-in / rig-up / rig-down (assist cranes too)
-  const booksOf = (cid: string) => jobs.filter(j => jobCranes(j).includes(cid)).map(j => { const w = busyWindow(j, cid)!; return { ...j, startDate: w.from, endDate: w.to, orig: j } })
+  const booksOf = (cid: string) => jobs.filter(j => jobCranes(j).includes(cid)).map(j => { const w = busyWindow(j, cid)!; const p = planFor(j, cid); const rw = p ? rigWindow(p) : undefined; return { ...j, startDate: rw ? rw.from : w.from, endDate: rw ? rw.to : w.to, orig: j } })
   const freeToday = cranes.filter(c => c.status !== 'Maintenance' && c.status !== 'Out of Service' && !booksOf(c.id).some(j => j.startDate <= today() && j.endDate >= today())).length
   const cell = 100 / days.length
   const idx = (d: string) => Math.max(0, Math.min(days.length - 1, diffDays(d, days[0])))
@@ -83,7 +83,7 @@ export default function Forecast() {
                     const overlaps = onDown(j) || (conflict && bk.some(x => x.id !== j.id && x.startDate <= j.endDate && x.endDate >= j.startDate && pairClash(j, x)))
                     // dive3 M8: one segment per rig phase (move-in / rig-up / rig-down), coloured like the legend
                     const segs: { a: number; b: number; ph: RigPhase }[] = []
-                    if (!overlaps) for (let k = s; k <= e; k++) { const ph = phaseOn((j as T.Job & { orig?: T.Job }).orig ?? j, c.id, days[k]) ?? 'work'; const L0 = segs.at(-1); if (L0 && L0.ph === ph && L0.b === k - 1) L0.b = k; else segs.push({ a: k, b: k, ph }) }
+                    if (!overlaps) for (let k = s; k <= e; k++) { const ph = phaseOn((j as T.Job & { orig?: T.Job }).orig ?? j, c.id, days[k]); if (!ph) continue; const L0 = segs.at(-1); if (L0 && L0.ph === ph && L0.b === k - 1) L0.b = k; else segs.push({ a: k, b: k, ph }) }
                     const divColor = divMark(db.divisions.find(d => d.id === j.divisionId)?.color)
                     const cat = overlaps ? 'conflict' as const : outOfState(db, j, c.branchId) ? 'outstate' as const : 'working' as const, cs = st(cat), awarded = !overlaps && j.stage === 'Awarded'
                     return (

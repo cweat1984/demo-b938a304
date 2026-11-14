@@ -44,9 +44,19 @@ export function SignaturePad({ onChange, height = 180 }: { onChange: (dataUrl: s
   const drawing = useRef(false)
   const [empty, setEmpty] = useState(true)
   useEffect(() => {
-    const c = ref.current!; const r = c.getBoundingClientRect(); const dpr = window.devicePixelRatio || 1
-    c.width = r.width * dpr; c.height = r.height * dpr
-    const ctx = c.getContext('2d')!; ctx.scale(dpr, dpr); ctx.lineWidth = 2.6; ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.strokeStyle = '#0f172a'
+    const c = ref.current!
+    const fit = () => {
+      const r = c.getBoundingClientRect(); const dpr = window.devicePixelRatio || 1
+      const w = Math.max(1, Math.round(r.width * dpr)), h = Math.max(1, Math.round(r.height * dpr))
+      if (c.width === w && c.height === h) return
+      const prev = c.width > 1 && c.height > 1 ? c.toDataURL() : ''
+      c.width = w; c.height = h
+      const ctx = c.getContext('2d')!; ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.lineWidth = 2.6; ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.strokeStyle = '#0f172a'
+      if (prev) { const img = new Image(); img.onload = () => ctx.drawImage(img, 0, 0, r.width, r.height); img.src = prev }
+    }
+    fit()
+    const ro = new ResizeObserver(fit); ro.observe(c)
+    return () => ro.disconnect()
   }, [])
   const pos = (e: React.PointerEvent) => { const r = ref.current!.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top] as const }
   const down = (e: React.PointerEvent) => { drawing.current = true; ref.current!.setPointerCapture(e.pointerId); const ctx = ref.current!.getContext('2d')!; const [x, y] = pos(e); ctx.beginPath(); ctx.moveTo(x, y) }

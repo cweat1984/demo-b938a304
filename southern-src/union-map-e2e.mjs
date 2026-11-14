@@ -92,7 +92,7 @@ const center = async (p, sel) => { const b = await p.locator(sel).first().boundi
   await p.keyboard.press('Escape'); await p.keyboard.press('Escape'); await go(p, 'union'); await p.waitForTimeout(600); ok(await p.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), '1920: no horizontal overflow')
   // guest never sees it
   const g = await br.newContext({ viewport: { width: 1920, height: 1080 } }); const gp = await g.newPage(); watch(gp, 'guest'); await gp.addInitScript(() => localStorage.setItem('sc-tour-seen', '1'))
-  await gp.goto(base); await gp.waitForSelector('[data-role=ops]', { timeout: 30000 }); await gp.evaluate(() => window.__store.getState().signIn('guest')); await gp.waitForTimeout(800)
+  await gp.goto(base); await gp.waitForSelector('[data-role=ops]', { timeout: 30000 }); await gp.evaluate(() => { sessionStorage.setItem('sc-guest', 'signed-pass'); window.__store.getState().signIn('guest', 'Guest pass') }); await gp.waitForTimeout(800)
   await go(gp, 'myinfo'); ok(await gp.locator('[data-testid=union-history]').count() === 0, 'guest: no union history on My Info')
   await gp.evaluate(id => window.__store.getState().open({ type: 'employee', id }), emp); await gp.waitForTimeout(800); ok(await gp.locator('[data-testid=emp-union-history]').count() === 0, 'guest: no Union history button on employee record')
   await br.close()

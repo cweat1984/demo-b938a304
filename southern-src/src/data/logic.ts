@@ -4,6 +4,7 @@ import { today, between, diffDays, addDays, range } from '../lib/util'
 import { extrasSummary, extraLabel } from './extras'
 import { jobCranes, phaseOn, sharedOn } from './rig'
 import { BURDEN, PER_DIEM_RATES, TRAILER_DAY_COST, distMiles, requiredPositions } from './seed'
+import { dtContext, payRulesOf, ruleFor, splitEntries, type PaySlice } from './payRules'
 
 export { requiredPositions }
 
@@ -159,10 +160,50 @@ export type CostLine = { category: T.CostCategory; description: string; amount: 
 const ONE_TIME_CATS: T.CostCategory[] = ['Engineering / Lift Plan', 'Permits & Escorts', 'Materials', 'Subcontractors', 'Other']
 export const isOneTime = (l: CostLine) => ONE_TIME_CATS.includes(l.category) || /\b(mob|demob|mobiliz|haul-in|assist crane|pad rebuild|standby)\b/i.test(l.description)
 
-export function entryCost(e: T.Employee | undefined, te: T.TimeEntry) {
+/** Straight, overtime and double time for every time entry, using each person's pay rule and the job or site double-time threshold. Same numbers the Time screen, Paychex file, job cost and My pay use. */
+export function overtimeByEntry(db: T.DB): Map<string, PaySlice> {
+  const rules = payRulesOf(db)
+  const byEmp = new Map<string, T.TimeEntry[]>()
+  for (const t of db.time) {
+    const list = byEmp.get(t.employeeId)
+    if (list) list.push(t)
+    else byEmp.set(t.employeeId, [t])
+  }
+  const out = new Map<string, PaySlice>()
+  for (const [empId, list] of byEmp) {
+    const rule = ruleFor(rules, byId(db.employees, empId))
+    const splits = splitEntries(list, rule, e => dtContext(db, e.jobId))
+    for (const [id, s] of splits) out.set(id, s)
+  }
+  return out
+}
+export function entryCost(e: T.Employee | undefined, te: T.TimeEntry, ot: number | PaySlice = 0) {
   const rate = e?.rate ?? 30
-  const reg = Math.min(te.hours, 10), ot = Math.max(0, te.hours - 10)
-  return { labor: (reg + ot * 1.5) * rate * BURDEN, perDiem: te.perDiems.reduce((s, p) => s + PER_DIEM_RATES[p], 0) }
+  const slice: PaySlice = typeof ot === 'number'
+    ? { reg: Math.max(0, te.hours - Math.max(0, Math.min(ot, te.hours))), ot: Math.max(0, Math.min(ot, te.hours)), dt: 0, otWeight: Math.max(0, Math.min(ot, te.hours)) * 1.5, dtWeight: 0, otMult: 1.5, dtMult: 2 }
+    : ot
+  return { labor: (slice.reg + slice.otWeight + slice.dtWeight) * rate * BURDEN, perDiem: te.perDiems.reduce((s, p) => s + PER_DIEM_RATES[p], 0), slice }
+}
+/** Customer invoice lines for overtime and double time already on the timecards. Empty unless the job is set to bill them (the day rate is unchanged). */
+export function billedLaborLines(db: T.DB, job: T.Job): { description: string; qty: number; rate: number }[] {
+  if (!job.billOt) return []
+  const splits = overtimeByEntry(db)
+  const acc = new Map<string, { ot: number; dt: number; otW: number; dtW: number; rate: number }>()
+  for (const t of db.time) {
+    if (t.jobId !== job.id) continue
+    const s = splits.get(t.id)
+    if (!s || s.ot + s.dt <= 0) continue
+    const a = acc.get(t.employeeId) ?? { ot: 0, dt: 0, otW: 0, dtW: 0, rate: byId(db.employees, t.employeeId)?.rate ?? 0 }
+    a.ot += s.ot; a.dt += s.dt; a.otW += s.otWeight; a.dtW += s.dtWeight
+    acc.set(t.employeeId, a)
+  }
+  const lines: { description: string; qty: number; rate: number }[] = []
+  for (const [id, a] of acc) {
+    const name = fullName(byId(db.employees, id))
+    if (a.ot > 0.001) lines.push({ description: `Overtime labor — ${name}`, qty: Math.round(a.ot * 100) / 100, rate: Math.round(a.rate * (a.otW / a.ot) * 100) / 100 })
+    if (a.dt > 0.001) lines.push({ description: `Double time labor — ${name}`, qty: Math.round(a.dt * 100) / 100, rate: Math.round(a.rate * (a.dtW / a.dt) * 100) / 100 })
+  }
+  return lines
 }
 
 export function jobCosting(db: T.DB, job: T.Job, ref = today()) {
@@ -172,10 +213,11 @@ export function jobCosting(db: T.DB, job: T.Job, ref = today()) {
   const lastDay = job.endDate < ref ? job.endDate : addDays(ref, -1) >= job.startDate ? ref : job.startDate
   const earnedDays = !started ? 0 : diffDays(lastDay < job.endDate ? lastDay : job.endDate, job.startDate) + 1
   const pct = Math.min(1, earnedDays / totalDays)
-  // labor & per diem from time entries (enter once: time → payroll → job cost)
+  // labor & per diem from time entries (enter once: time → payroll → job cost). The person's pay rule, not a fixed 40.
+  const otOf = overtimeByEntry(db)
   db.time.filter(t => t.jobId === job.id).forEach(t => {
     const e = byId(db.employees, t.employeeId)
-    const c = entryCost(e, t)
+    const c = entryCost(e, t, otOf.get(t.id) ?? 0)
     lines.push({ category: 'Labor', description: `${fullName(e)} · ${t.activity} · ${t.hours}h`, amount: c.labor, source: 'Time Entry', date: t.date, refId: t.id })
     if (c.perDiem) lines.push({ category: 'Per Diem', description: `${fullName(e)} · ${t.perDiems.join(' + ')}`, amount: c.perDiem, source: 'Per Diem', date: t.date, refId: t.id })
   })
@@ -293,7 +335,7 @@ export function groupProfit<K extends string>(rows: T.HistJob[], key: (h: T.Hist
 
 // ---------- AR ----------
 export function agingBucket(inv: T.Invoice, ref = today()) {
-  if (inv.paid >= inv.amount) return 'Paid'
+  if (Math.abs(inv.amount - inv.paid) <= 0.005) return 'Paid'
   const late = diffDays(ref, inv.due)
   if (late <= 0) return 'Current'
   if (late <= 30) return '1–30'

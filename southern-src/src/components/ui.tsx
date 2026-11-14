@@ -182,6 +182,7 @@ export function useBackClose(open: boolean, onClose: () => void) {
 export function Sheet({ open, onClose, children, title, sub, width = 560, actions, z = 60, onBack }: { open: boolean; onClose: () => void; children: ReactNode; title?: ReactNode; sub?: ReactNode; width?: number; actions?: ReactNode; z?: number; onBack?: () => void }) {
   useEsc(open, onClose)
   useBackClose(open, onClose)
+  const trap = useFocusTrap(open)
   const mobile = useIsMobile()
   return createPortal(
     <AnimatePresence>
@@ -189,11 +190,12 @@ export function Sheet({ open, onClose, children, title, sub, width = 560, action
         <div className="fixed inset-0" style={{ zIndex: z }}>
           <motion.div className="absolute inset-0 bg-black/50 backdrop-blur-[2px]" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={onClose} />
           <motion.div
+            ref={trap}
             role="dialog" aria-modal="true"
             className={cn('absolute bg-surface border-line flex flex-col shadow-2xl', mobile ? 'inset-x-0 bottom-0 max-h-[92vh] rounded-t-[28px] border-t' : 'right-0 top-0 bottom-0 border-l')}
             style={mobile ? undefined : { width: Math.min(width, window.innerWidth - 40) }}
             initial={mobile ? { y: '100%' } : { x: '100%' }} animate={mobile ? { y: 0 } : { x: 0 }} exit={mobile ? { y: '100%' } : { x: '100%' }}
-            transition={{ type: 'spring', damping: 32, stiffness: 320 }}
+            transition={{ duration: 0.18, ease: 'easeOut' }}
           >
             {mobile && <div className="mx-auto mt-2.5 h-1.5 w-10 rounded-full bg-surface-3" />}
             <div className="flex items-start gap-3 px-6 pt-5 pb-4">
